@@ -54,68 +54,12 @@ function defaultSettings() {
   return { desk: 'wood', sort: 'updated', view: 'all', lastPaper: 'lined' };
 }
 
-function seedState() {
-  const t = Date.now();
-  const work = { id: 'cat-work', name: '工作', color: '#e8734a' };
-  const life = { id: 'cat-life', name: '生活', color: '#4a90e2' };
-  const idea = { id: 'cat-idea', name: '灵感', color: '#8b6bb1' };
+// 初始数据为空：不内置任何示例备忘与分类
+function emptyState() {
   return {
     rev: 1,
-    categories: [work, life, idea],
-    notes: [
-      {
-        id: uid('n'),
-        title: '欢迎使用我的备忘录',
-        type: 'text',
-        content: '数据现在保存在服务器上，换台设备打开也是同一份。\n\n· 点卡片任意位置即可编辑\n· 右上角图钉能把常用备忘固定在前面\n· 顶栏「桌面」换桌面材质，编辑器里换纸张样式',
-        todos: [],
-        categoryId: null,
-        paper: 'lined',
-        pinned: true,
-        createdAt: t,
-        updatedAt: t
-      },
-      {
-        id: uid('n'),
-        title: '今天要做的事',
-        type: 'todo',
-        content: '',
-        todos: [
-          { id: uid('t'), text: '梳理本周待办', done: true },
-          { id: uid('t'), text: '写一份周报', done: false },
-          { id: uid('t'), text: '给妈妈打个电话', done: false }
-        ],
-        categoryId: life.id,
-        paper: 'sticky',
-        pinned: false,
-        createdAt: t - 3600000,
-        updatedAt: t - 1200000
-      },
-      {
-        id: uid('n'),
-        title: '季度规划要点',
-        type: 'text',
-        content: '一、聚焦主线，砍掉边缘需求\n二、每周复盘一次，只留最有价值的三件事\n三、和设计同步一次视觉规范',
-        todos: [],
-        categoryId: work.id,
-        paper: 'kraft',
-        pinned: false,
-        createdAt: t - 7200000,
-        updatedAt: t - 5400000
-      },
-      {
-        id: uid('n'),
-        title: '随手记',
-        type: 'text',
-        content: '把「写实」当成一种态度：纸要有纹路，木要有年轮，字要像人写的。',
-        todos: [],
-        categoryId: idea.id,
-        paper: 'mint',
-        pinned: false,
-        createdAt: t - 10800000,
-        updatedAt: t - 9000000
-      }
-    ],
+    categories: [],
+    notes: [],
     settings: defaultSettings()
   };
 }
@@ -191,7 +135,7 @@ function loadState() {
     if (err.code !== 'ENOENT') {
       console.error('[my-memo] 读取数据失败（将重建初始数据）：' + err.message);
     }
-    state = seedState();
+    state = emptyState();
     persist();
   }
 }

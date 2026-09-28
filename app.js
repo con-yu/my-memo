@@ -424,9 +424,13 @@
     emptyState.hidden = list.length > 0;
     if (!list.length) {
       var msg = $('#emptyState .empty-note p');
-      msg.textContent = state.notes.length
-        ? '当前筛选条件下没有内容，换个分类或清空搜索试试。'
-        : '点右上角「新建备忘录」，写下第一条吧。';
+      if (!state.notes.length) {
+        msg.textContent = state.categories.length
+          ? '点右上角「新建备忘录」，写下第一条吧。'
+          : '还没有内容。先在左侧新建一个分类，再写下第一条备忘吧。';
+      } else {
+        msg.textContent = '当前筛选条件下没有内容，换个分类或清空搜索试试。';
+      }
     }
   }
 
