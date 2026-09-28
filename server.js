@@ -285,9 +285,9 @@ async function handleApi(req, res, sub) {
       if (req.method !== 'GET') return sendJSON(res, 405, { error: 'method not allowed' });
       return sendJSON(res, 200, Object.assign({ rev: state.rev }, state));
     }
-    if (parts[0] === 'notes') return handleNotes(req, res, parts);
-    if (parts[0] === 'categories') return handleCategories(req, res, parts);
-    if (parts[0] === 'settings') return handleSettings(req, res);
+    if (parts[0] === 'notes') return await handleNotes(req, res, parts);
+    if (parts[0] === 'categories') return await handleCategories(req, res, parts);
+    if (parts[0] === 'settings') return await handleSettings(req, res);
     return sendJSON(res, 404, { error: 'not found' });
   } catch (err) {
     console.error('[my-memo] API 异常：' + err.stack);
@@ -361,3 +361,11 @@ function shutdown(signal) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+
+// 兜底：记录异常而不是静默退出
+process.on('unhandledRejection', (err) => {
+  console.error('[my-memo] 未处理的 Promise 异常：' + (err && err.stack ? err.stack : err));
+});
+process.on('uncaughtException', (err) => {
+  console.error('[my-memo] 未捕获异常：' + (err && err.stack ? err.stack : err));
+});

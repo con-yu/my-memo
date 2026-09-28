@@ -119,7 +119,8 @@
   }
 
   function api(method, path, body) {
-    var opts = { method: method, headers: {} };
+    // Accept: application/json 让前置的鉴权网关区分「接口请求」与「页面请求」
+    var opts = { method: method, headers: { 'Accept': 'application/json' } };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
@@ -158,6 +159,10 @@
       setSync('ok');
       return res ? res.data : null;
     }).catch(function (err) {
+      if (err.status === 401) {
+        gotoLogin();
+        return null;
+      }
       if (typeof err.status === 'undefined') {
         online = false;
         setSync('offline');
@@ -258,6 +263,15 @@
     offlineMask.hidden = true;
   }
 
+  // 会话失效（登录过期/被登出）→ 去登录页，登录后回到当前地址
+  function gotoLogin() {
+    setSync('offline', '需要重新登录');
+    var next = location.pathname + location.search;
+    setTimeout(function () {
+      location.href = '/login?next=' + encodeURIComponent(next);
+    }, 600);
+  }
+
   /* ---------------- 启动：从服务端拉取数据 ---------------- */
 
   function boot() {
@@ -276,6 +290,10 @@
       applyDesk();
       renderAll();
     }).catch(function (err) {
+      if (err.status === 401) {
+        gotoLogin();
+        return;
+      }
       online = false;
       setSync('offline');
       showOffline(err);
