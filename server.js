@@ -1,23 +1,29 @@
 #!/usr/bin/env node
 /* ==========================================================================
-   我的备忘录 · 后端服务
+   我的备忘录 · 后端服务（多账号隔离版）
    - 零依赖（仅 Node 内置模块），Node >= 14 即可运行
    - JSON 文件持久化（原子写：先写 .tmp 再 rename）
+   - **按账号隔离**：数据按网关注入的 X-User-Id 分区存放，每个账号只看自己的备忘
    - REST API：
        GET    /api/health
-       GET    /api/state              读取全部数据
+       GET    /api/state              读取当前账号的数据
        PUT    /api/notes/:id          新建或更新一条备忘（幂等 upsert）
        DELETE /api/notes/:id          删除一条备忘
        PUT    /api/categories/:id     新建或更新一个分类
        DELETE /api/categories/:id     删除分类（其下备忘转为未分类）
        PATCH  /api/settings           更新界面偏好（桌面/排序/视图/纸张）
-   - 同时托管前端静态文件，可直接通过 http://127.0.0.1:5058/ 访问
-   - 兼容子路径部署（Nginx 反代 /my-memo/ 时自动识别 /api/ 之前的任意前缀）
+   - 同时托管前端静态文件
+   - 兼容子路径部署（识别 /api/ 之前的任意前缀）
+
+   身份来源：
+     由 Nginx 在鉴权通过后注入（auth_request_set → proxy_set_header），
+     客户端自带的同名请求头会被网关覆盖，无法伪造。
 
    环境变量：
-     PORT      监听端口，默认 5058
-     HOST      监听地址，默认 127.0.0.1
-     DATA_DIR  数据目录，默认 ./data
+     PORT        监听端口，默认 5058
+     HOST        监听地址，默认 127.0.0.1
+     DATA_DIR    数据目录，默认 ./data
+     ALLOW_ANON  设为 1 时允许无身份访问（落到 anonymous 空间，仅本机调试用）
    ========================================================================== */
 'use strict';
 
@@ -31,6 +37,7 @@ const HOST = process.env.HOST || '127.0.0.1';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'store.json');
 const ROOT = __dirname;
+const ALLOW_ANON = process.env.ALLOW_ANON === '1';
 
 const MAX_BODY = 512 * 1024; // 512KB
 const PAPERS = ['lined', 'grid', 'plain', 'kraft', 'sticky', 'mint'];
@@ -52,16 +59,6 @@ function uid(prefix) {
 
 function defaultSettings() {
   return { desk: 'wood', sort: 'updated', view: 'all', lastPaper: 'lined' };
-}
-
-// 初始数据为空：不内置任何示例备忘与分类
-function emptyState() {
-  return {
-    rev: 1,
-    categories: [],
-    notes: [],
-    settings: defaultSettings()
-  };
 }
 
 /* ------------------------------ 数据校验 ------------------------------ */
@@ -99,7 +96,12 @@ function sanitizeCategory(raw, id) {
   return { id: id, name: name, color: color };
 }
 
-function normalizeState(raw) {
+// 单个账号的数据空间
+function emptySpace() {
+  return { categories: [], notes: [], settings: defaultSettings() };
+}
+
+function normalizeSpace(raw) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const settings = Object.assign(defaultSettings(), src.settings && typeof src.settings === 'object' ? src.settings : {});
   if (DESKS.indexOf(settings.desk) < 0) settings.desk = 'wood';
@@ -107,47 +109,78 @@ function normalizeState(raw) {
   if (PAPERS.indexOf(settings.lastPaper) < 0) settings.lastPaper = 'lined';
   if (typeof settings.view !== 'string' || !VIEW_RE.test(settings.view)) settings.view = 'all';
 
-  const categories = (Array.isArray(src.categories) ? src.categories : []).map((c) => sanitizeCategory(c, c && c.id ? String(c.id).slice(0, 64) : uid('cat'))).filter(Boolean);
+  const categories = (Array.isArray(src.categories) ? src.categories : [])
+    .map((c) => sanitizeCategory(c, c && c.id ? String(c.id).slice(0, 64) : uid('cat')))
+    .filter(Boolean);
   const catIds = new Set(categories.map((c) => c.id));
-  const notes = (Array.isArray(src.notes) ? src.notes : []).map((n) => sanitizeNote(n, n && n.id ? String(n.id).slice(0, 64) : uid('n'))).filter(Boolean);
+  const notes = (Array.isArray(src.notes) ? src.notes : [])
+    .map((n) => sanitizeNote(n, n && n.id ? String(n.id).slice(0, 64) : uid('n')))
+    .filter(Boolean);
   notes.forEach((n) => {
     if (n.categoryId && !catIds.has(n.categoryId)) n.categoryId = null;
   });
 
-  return {
-    rev: Number(src.rev) || 1,
-    categories: categories,
-    notes: notes,
-    settings: settings
-  };
+  return { categories: categories, notes: notes, settings: settings };
 }
 
 /* ------------------------------ 持久化 ------------------------------ */
 
-let state = normalizeState(null);
+let store = { rev: 1, spaces: {}, pending: null };
 let writing = Promise.resolve();
 
 function loadState() {
   try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf8');
-    state = normalizeState(JSON.parse(raw));
-  } catch (err) {
-    if (err.code !== 'ENOENT') {
-      console.error('[my-memo] 读取数据失败（将重建初始数据）：' + err.message);
+    const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    if (raw && raw.spaces && typeof raw.spaces === 'object') {
+      store = {
+        rev: Number(raw.rev) || 1,
+        spaces: raw.spaces,
+        pending: raw.pending && typeof raw.pending === 'object' ? raw.pending : null
+      };
+      Object.keys(store.spaces).forEach((k) => {
+        store.spaces[k] = normalizeSpace(store.spaces[k]);
+      });
+      console.log('[my-memo] 已载入 ' + Object.keys(store.spaces).length + ' 个账号空间');
+    } else {
+      // 旧版全局数据：暂存为 pending，首位登录用户首次访问时归属给他
+      store = { rev: Number(raw.rev) || 1, spaces: {}, pending: normalizeSpace(raw) };
+      console.log('[my-memo] 检测到历史全局数据，已暂存，将由首位登录的账号继承');
+      persist();
     }
-    state = emptyState();
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.error('[my-memo] 读取数据失败（将重建）：' + err.message);
+    store = { rev: 1, spaces: {}, pending: null };
     persist();
   }
 }
 
 function persist() {
-  const snapshot = JSON.stringify(state, null, 2);
+  const snapshot = JSON.stringify(store, null, 2);
   writing = writing
     .then(() => fsp.mkdir(DATA_DIR, { recursive: true }))
     .then(() => fsp.writeFile(DATA_FILE + '.tmp', snapshot, 'utf8'))
     .then(() => fsp.rename(DATA_FILE + '.tmp', DATA_FILE))
     .catch((err) => console.error('[my-memo] 写入数据失败：' + err.message));
   return writing;
+}
+
+// 取（或创建）某个账号的数据空间
+function getSpace(userId) {
+  let space = store.spaces[userId];
+  if (space) return space;
+
+  if (store.pending) {
+    // 历史数据由首位登录的账号继承
+    space = normalizeSpace(store.pending);
+    store.pending = null;
+    console.log('[my-memo] 历史数据已归属账号 ' + userId);
+  } else {
+    space = emptySpace();
+  }
+  store.spaces[userId] = space;
+  store.rev += 1;
+  persist();
+  return space;
 }
 
 /* ------------------------------ HTTP ------------------------------ */
@@ -189,47 +222,47 @@ function readJSON(req) {
 
 // 写操作统一出口：自增版本号、落盘、返回 { rev, data }
 function commit(res, data, tag) {
-  state.rev += 1;
+  store.rev += 1;
   persist();
-  if (tag) console.log('[my-memo] ' + tag + ' rev=' + state.rev);
-  return sendJSON(res, 200, { rev: state.rev, data: data });
+  if (tag) console.log('[my-memo] ' + tag + ' rev=' + store.rev);
+  return sendJSON(res, 200, { rev: store.rev, data: data });
 }
 
-async function handleNotes(req, res, parts) {
+async function handleNotes(req, res, parts, space) {
   const id = parts[1] ? decodeURIComponent(parts[1]).slice(0, 64) : '';
   if (!id) return sendJSON(res, 400, { error: 'missing id' });
 
   if (req.method === 'GET') {
-    const note = state.notes.filter((n) => n.id === id)[0];
-    return note ? sendJSON(res, 200, { rev: state.rev, data: note }) : sendJSON(res, 404, { error: 'not found' });
+    const note = space.notes.filter((n) => n.id === id)[0];
+    return note ? sendJSON(res, 200, { rev: store.rev, data: note }) : sendJSON(res, 404, { error: 'not found' });
   }
 
   if (req.method === 'PUT') {
     const body = await readJSON(req);
     const note = sanitizeNote(body, id);
     if (!note) return sendJSON(res, 400, { error: 'invalid note' });
-    const idx = state.notes.findIndex((n) => n.id === id);
+    const idx = space.notes.findIndex((n) => n.id === id);
     if (idx >= 0) {
-      note.createdAt = state.notes[idx].createdAt;
-      state.notes[idx] = note;
+      note.createdAt = space.notes[idx].createdAt;
+      space.notes[idx] = note;
     } else {
-      if (note.categoryId && !state.categories.some((c) => c.id === note.categoryId)) note.categoryId = null;
-      state.notes.unshift(note);
+      if (note.categoryId && !space.categories.some((c) => c.id === note.categoryId)) note.categoryId = null;
+      space.notes.unshift(note);
     }
     return commit(res, note, 'PUT /notes/' + id);
   }
 
   if (req.method === 'DELETE') {
-    const before = state.notes.length;
-    state.notes = state.notes.filter((n) => n.id !== id);
-    if (before === state.notes.length) return sendJSON(res, 404, { error: 'not found' });
+    const before = space.notes.length;
+    space.notes = space.notes.filter((n) => n.id !== id);
+    if (before === space.notes.length) return sendJSON(res, 404, { error: 'not found' });
     return commit(res, { id: id }, 'DELETE /notes/' + id);
   }
 
   return sendJSON(res, 405, { error: 'method not allowed' });
 }
 
-async function handleCategories(req, res, parts) {
+async function handleCategories(req, res, parts, space) {
   const id = parts[1] ? decodeURIComponent(parts[1]).slice(0, 64) : '';
   if (!id) return sendJSON(res, 400, { error: 'missing id' });
 
@@ -237,38 +270,38 @@ async function handleCategories(req, res, parts) {
     const body = await readJSON(req);
     const cat = sanitizeCategory(body, id);
     if (!cat) return sendJSON(res, 400, { error: 'invalid category' });
-    const idx = state.categories.findIndex((c) => c.id === id);
-    if (idx >= 0) state.categories[idx] = cat;
-    else state.categories.push(cat);
+    const idx = space.categories.findIndex((c) => c.id === id);
+    if (idx >= 0) space.categories[idx] = cat;
+    else space.categories.push(cat);
     return commit(res, cat, 'PUT /categories/' + id);
   }
 
   if (req.method === 'DELETE') {
-    const exists = state.categories.some((c) => c.id === id);
+    const exists = space.categories.some((c) => c.id === id);
     if (!exists) return sendJSON(res, 404, { error: 'not found' });
     let affected = 0;
-    state.notes.forEach((n) => {
+    space.notes.forEach((n) => {
       if (n.categoryId === id) {
         n.categoryId = null;
         affected += 1;
       }
     });
-    state.categories = state.categories.filter((c) => c.id !== id);
-    if (state.settings.view === id) state.settings.view = 'all';
+    space.categories = space.categories.filter((c) => c.id !== id);
+    if (space.settings.view === id) space.settings.view = 'all';
     return commit(res, { id: id, affected: affected }, 'DELETE /categories/' + id);
   }
 
   return sendJSON(res, 405, { error: 'method not allowed' });
 }
 
-async function handleSettings(req, res) {
+async function handleSettings(req, res, space) {
   if (req.method !== 'PATCH' && req.method !== 'PUT') {
     return sendJSON(res, 405, { error: 'method not allowed' });
   }
   const body = await readJSON(req);
   if (!body || typeof body !== 'object') return sendJSON(res, 400, { error: 'invalid body' });
 
-  const s = state.settings;
+  const s = space.settings;
   if (typeof body.desk === 'string' && DESKS.indexOf(body.desk) >= 0) s.desk = body.desk;
   if (typeof body.sort === 'string' && SORTS.indexOf(body.sort) >= 0) s.sort = body.sort;
   if (typeof body.lastPaper === 'string' && PAPERS.indexOf(body.lastPaper) >= 0) s.lastPaper = body.lastPaper;
@@ -280,14 +313,33 @@ async function handleSettings(req, res) {
 async function handleApi(req, res, sub) {
   const parts = sub.split('/').filter(Boolean);
   try {
-    if (parts[0] === 'health') return sendJSON(res, 200, { ok: true, rev: state.rev });
+    if (parts[0] === 'health') {
+      return sendJSON(res, 200, { ok: true, rev: store.rev, spaces: Object.keys(store.spaces).length });
+    }
+
+    // 身份来自网关（Nginx auth_request_set → proxy_set_header），客户端无法伪造
+    let userId = String(req.headers['x-user-id'] || '').trim().slice(0, 64);
+    if (!userId) {
+      if (!ALLOW_ANON) {
+        return sendJSON(res, 401, { error: 'unauthorized', hint: '请通过站点网关登录后访问' });
+      }
+      userId = 'anonymous';
+    }
+    const space = getSpace(userId);
+
     if (parts[0] === 'state') {
       if (req.method !== 'GET') return sendJSON(res, 405, { error: 'method not allowed' });
-      return sendJSON(res, 200, Object.assign({ rev: state.rev }, state));
+      return sendJSON(res, 200, {
+        rev: store.rev,
+        user: userId,
+        categories: space.categories,
+        notes: space.notes,
+        settings: space.settings
+      });
     }
-    if (parts[0] === 'notes') return await handleNotes(req, res, parts);
-    if (parts[0] === 'categories') return await handleCategories(req, res, parts);
-    if (parts[0] === 'settings') return await handleSettings(req, res);
+    if (parts[0] === 'notes') return await handleNotes(req, res, parts, space);
+    if (parts[0] === 'categories') return await handleCategories(req, res, parts, space);
+    if (parts[0] === 'settings') return await handleSettings(req, res, space);
     return sendJSON(res, 404, { error: 'not found' });
   } catch (err) {
     console.error('[my-memo] API 异常：' + err.stack);
@@ -347,8 +399,10 @@ loadState();
 persist();
 
 server.listen(PORT, HOST, () => {
+  const users = Object.keys(store.spaces).length;
   console.log('[my-memo] 服务已启动: http://' + HOST + ':' + PORT);
-  console.log('[my-memo] 数据文件: ' + DATA_FILE + '（rev=' + state.rev + '，备忘 ' + state.notes.length + ' 条）');
+  console.log('[my-memo] 数据文件: ' + DATA_FILE + '（rev=' + store.rev + '，账号空间 ' + users + ' 个' +
+    (store.pending ? '，有历史数据待继承' : '') + '）');
 });
 
 function shutdown(signal) {
