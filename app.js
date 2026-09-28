@@ -179,7 +179,28 @@
   function removeNote(id) { return push('/notes/' + encodeURIComponent(id), 'DELETE'); }
   function pushCat(cat) { return push('/categories/' + encodeURIComponent(cat.id), 'PUT', cat); }
   function removeCat(id) { return push('/categories/' + encodeURIComponent(id), 'DELETE'); }
-  function pushSettings() { return push('/settings', 'PATCH', state.settings); }
+  // 偏好类改动（切视图 / 换桌面 / 排序 / 纸张）做合并防抖：
+  // 每次 PATCH 都要穿过 Cloudflare 隧道（单次 1s+），连续操作合并成一次能明显减少等待。
+  var settingsTimer = null;
+  function pushSettings(immediate) {
+    clearTimeout(settingsTimer);
+    settingsTimer = null;
+    if (immediate) return push('/settings', 'PATCH', state.settings);
+    settingsTimer = setTimeout(function () {
+      settingsTimer = null;
+      push('/settings', 'PATCH', state.settings);
+    }, 600);
+    return Promise.resolve(null);
+  }
+
+  // 页面隐藏/离开前把待发送的偏好立即提交，避免防抖期间丢改动
+  function flushSettings() {
+    if (settingsTimer) pushSettings(true);
+  }
+  window.addEventListener('pagehide', flushSettings);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flushSettings();
+  });
 
   /* ---------------- DOM ---------------- */
 
