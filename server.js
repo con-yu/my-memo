@@ -377,19 +377,43 @@ function handleStatic(req, res, pathname) {
     return;
   }
   const name = Object.prototype.hasOwnProperty.call(STATIC_MIME, base) ? base : 'index.html';
-  fs.readFile(path.join(ROOT, name), (err, buf) => {
+  const file = path.join(ROOT, name);
+
+  fs.stat(file, (err, st) => {
     if (err) {
       res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('读取静态文件失败: ' + err.message);
       return;
     }
-    res.writeHead(200, {
-      'Content-Type': STATIC_MIME[name],
-      'Content-Length': buf.length,
-      'Cache-Control': 'no-cache'
+    // 用「大小 + 修改时间」做 ETag：内容没变就回 304，省掉穿隧道的整包传输
+    const etag = '"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) + '"';
+    const isHtml = name === 'index.html';
+    // CSS/JS 允许浏览器与 CF 边缘缓存 1 小时；HTML 每次都校验，保证改动即时可见
+    const cacheControl = isHtml ? 'no-cache' : 'public, max-age=3600';
+    const baseHead = {
+      'ETag': etag,
+      'Last-Modified': st.mtime.toUTCString(),
+      'Cache-Control': cacheControl
+    };
+
+    if ((req.headers['if-none-match'] || '') === etag) {
+      res.writeHead(304, baseHead);
+      return res.end();
+    }
+
+    fs.readFile(file, (err2, buf) => {
+      if (err2) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('读取静态文件失败: ' + err2.message);
+        return;
+      }
+      res.writeHead(200, Object.assign({
+        'Content-Type': STATIC_MIME[name],
+        'Content-Length': buf.length
+      }, baseHead));
+      if (req.method === 'HEAD') return res.end();
+      res.end(buf);
     });
-    if (req.method === 'HEAD') return res.end();
-    res.end(buf);
   });
 }
 
