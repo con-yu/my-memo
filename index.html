@@ -52,6 +52,11 @@
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5v13M5.5 12h13" /></svg>
       新建备忘录
     </button>
+
+    <div class="sync" id="sync" data-state="busy" title="数据同步状态">
+      <span class="sync-dot" aria-hidden="true"></span>
+      <span class="sync-text" id="syncText">连接服务…</span>
+    </div>
   </div>
 </header>
 
@@ -160,6 +165,19 @@
       <span class="spacer"></span>
       <button type="button" class="btn btn-ghost" id="confirmNo">取消</button>
       <button type="button" class="btn btn-danger" id="confirmYes">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 服务未连接 ============ -->
+<div class="mask" id="offlineMask" hidden>
+  <div class="sheet sheet--sm paper-plain" role="alertdialog" aria-modal="true" aria-label="未连接到服务">
+    <h3 class="sheet-title">未连接到服务</h3>
+    <p class="confirm-text" id="offlineText">无法连接后端服务，备忘录的数据需要服务端支持。</p>
+    <p class="offline-hint">本地启动：<code>node server.js</code> 后访问 <code>http://127.0.0.1:5058/</code></p>
+    <div class="editor-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary" id="retryBtn">重试连接</button>
     </div>
   </div>
 </div>

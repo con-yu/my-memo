@@ -1,11 +1,11 @@
 /* ==========================================================================
    我的备忘录 · 逻辑层
-   数据保存在浏览器 localStorage，纯前端、零依赖。
+   数据以服务器为唯一来源（见 server.js），前端通过 REST API 读写。
    ========================================================================== */
 (function () {
   'use strict';
 
-  var KEY = 'my-memo:v1';
+  var API = 'api'; // 相对路径，兼容部署在 /my-memo/ 之类的子路径下
 
   /* ---------------- 常量 ---------------- */
 
@@ -36,6 +36,8 @@
   ];
 
   var CAT_COLORS = ['#e8734a', '#e0a72e', '#6fae5a', '#4a90e2', '#8b6bb1', '#d95c8a', '#4fb3b3', '#8a8f98'];
+  var SORTS = ['updated', 'created', 'title'];
+  var DESK_IDS = DESKS.map(function (d) { return d.id; });
 
   /* ---------------- 工具 ---------------- */
 
@@ -73,114 +75,106 @@
     return y + (d.getMonth() + 1) + '月' + d.getDate() + '日';
   }
 
-  /* ---------------- 状态 ---------------- */
-
-  function seed() {
-    var t = Date.now();
-    var work = { id: 'cat-work', name: '工作', color: '#e8734a' };
-    var life = { id: 'cat-life', name: '生活', color: '#4a90e2' };
-    var idea = { id: 'cat-idea', name: '灵感', color: '#8b6bb1' };
-
-    return {
-      version: 1,
-      categories: [work, life, idea],
-      notes: [
-        {
-          id: uid('n'),
-          title: '欢迎使用我的备忘录',
-          type: 'text',
-          content: '这是一张横格纸卡片。\n\n· 点卡片任意位置即可编辑\n· 右上角图钉能把常用备忘固定在前面\n· 顶栏「桌面」可以更换桌面材质，编辑器里可以换纸张样式',
-          todos: [],
-          categoryId: null,
-          paper: 'lined',
-          pinned: true,
-          createdAt: t,
-          updatedAt: t
-        },
-        {
-          id: uid('n'),
-          title: '今天要做的事',
-          type: 'todo',
-          content: '',
-          todos: [
-            { id: uid('t'), text: '梳理本周待办', done: true },
-            { id: uid('t'), text: '写一份周报', done: false },
-            { id: uid('t'), text: '给妈妈打个电话', done: false }
-          ],
-          categoryId: life.id,
-          paper: 'sticky',
-          pinned: false,
-          createdAt: t - 3600000,
-          updatedAt: t - 1200000
-        },
-        {
-          id: uid('n'),
-          title: '季度规划要点',
-          type: 'text',
-          content: '一、聚焦主线，砍掉边缘需求\n二、每周复盘一次，只留最有价值的三件事\n三、和设计同步一次视觉规范',
-          todos: [],
-          categoryId: work.id,
-          paper: 'kraft',
-          pinned: false,
-          createdAt: t - 7200000,
-          updatedAt: t - 5400000
-        },
-        {
-          id: uid('n'),
-          title: '随手记',
-          type: 'text',
-          content: '把「写实」当成一种态度：纸要有纹路，木要有年轮，字要像人写的。',
-          todos: [],
-          categoryId: idea.id,
-          paper: 'mint',
-          pinned: false,
-          createdAt: t - 10800000,
-          updatedAt: t - 9000000
-        }
-      ],
-      settings: {
-        desk: 'wood',
-        sort: 'updated',
-        view: 'all',
-        lastPaper: 'lined'
-      }
-    };
-  }
-
-  function load() {
-    try {
-      var raw = localStorage.getItem(KEY);
-      if (!raw) return seed();
-      var data = JSON.parse(raw);
-      var base = seed();
-      data.categories = Array.isArray(data.categories) ? data.categories : [];
-      data.notes = Array.isArray(data.notes) ? data.notes : [];
-      data.settings = Object.assign({}, base.settings, data.settings || {});
-      data.notes.forEach(function (n) {
-        n.todos = Array.isArray(n.todos) ? n.todos : [];
-        n.type = n.type === 'todo' ? 'todo' : 'text';
-        n.paper = PAPER_PREVIEW[n.paper] ? n.paper : 'lined';
-      });
-      return data;
-    } catch (err) {
-      return seed();
+  function noteById(id) {
+    for (var i = 0; i < state.notes.length; i++) {
+      if (state.notes[i].id === id) return state.notes[i];
     }
+    return null;
   }
 
-  var state = load();
+  /* ---------------- 数据层 ---------------- */
+
+  var state = {
+    rev: 0,
+    categories: [],
+    notes: [],
+    settings: { desk: 'wood', sort: 'updated', view: 'all', lastPaper: 'lined' }
+  };
+  var online = false;
   var query = '';
   var noteDraft = null;
   var catDraft = null;
   var toastTimer = null;
   var confirmResolve = null;
 
-  function save() {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(state));
-    } catch (err) {
-      toast('本地存储写入失败，改动可能不会被保留');
-    }
+  function normalize(raw) {
+    var d = raw && typeof raw === 'object' ? raw : {};
+    var s = Object.assign({ desk: 'wood', sort: 'updated', view: 'all', lastPaper: 'lined' }, d.settings || {});
+    if (DESK_IDS.indexOf(s.desk) < 0) s.desk = 'wood';
+    if (SORTS.indexOf(s.sort) < 0) s.sort = 'updated';
+    if (!PAPER_PREVIEW[s.lastPaper]) s.lastPaper = 'lined';
+    if (typeof s.view !== 'string' || !s.view) s.view = 'all';
+
+    return {
+      rev: typeof d.rev === 'number' ? d.rev : 0,
+      categories: Array.isArray(d.categories) ? d.categories : [],
+      notes: (Array.isArray(d.notes) ? d.notes : []).map(function (n) {
+        n.todos = Array.isArray(n.todos) ? n.todos : [];
+        n.type = n.type === 'todo' ? 'todo' : 'text';
+        n.paper = PAPER_PREVIEW[n.paper] ? n.paper : 'lined';
+        return n;
+      }),
+      settings: s
+    };
   }
+
+  function api(method, path, body) {
+    var opts = { method: method, headers: {} };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    return fetch(API + path, opts).then(function (res) {
+      if (!res.ok) {
+        var err = new Error('HTTP ' + res.status);
+        err.status = res.status;
+        throw err;
+      }
+      return res.status === 204 ? null : res.json();
+    });
+  }
+
+  function setSync(mode, text) {
+    if (!syncEl) return;
+    syncEl.dataset.state = mode;
+    syncText.textContent = text || ({
+      ok: '已同步到服务器',
+      busy: '同步中…',
+      error: '同步失败',
+      offline: '未连接服务'
+    }[mode] || '');
+  }
+
+  // 所有写操作的统一出口：在线时走后端 API，失败给出明确提示
+  function push(path, method, body) {
+    if (!online) {
+      setSync('offline');
+      toast('未连接到服务，改动无法保存');
+      return Promise.resolve(null);
+    }
+    setSync('busy');
+    return api(method, path, body).then(function (res) {
+      if (res && typeof res.rev === 'number') state.rev = res.rev;
+      setSync('ok');
+      return res ? res.data : null;
+    }).catch(function (err) {
+      if (typeof err.status === 'undefined') {
+        online = false;
+        setSync('offline');
+        showOffline(err);
+      } else {
+        setSync('error');
+      }
+      toast('保存失败：' + err.message);
+      return null;
+    });
+  }
+
+  function pushNote(note) { return push('/notes/' + encodeURIComponent(note.id), 'PUT', note); }
+  function removeNote(id) { return push('/notes/' + encodeURIComponent(id), 'DELETE'); }
+  function pushCat(cat) { return push('/categories/' + encodeURIComponent(cat.id), 'PUT', cat); }
+  function removeCat(id) { return push('/categories/' + encodeURIComponent(id), 'DELETE'); }
+  function pushSettings() { return push('/settings', 'PATCH', state.settings); }
 
   /* ---------------- DOM ---------------- */
 
@@ -194,6 +188,10 @@
   var deskGrid = $('#deskGrid');
   var deskPopover = $('#deskPopover');
   var deskBtn = $('#deskBtn');
+  var syncEl = $('#sync');
+  var syncText = $('#syncText');
+  var offlineMask = $('#offlineMask');
+  var offlineText = $('#offlineText');
 
   var noteMask = $('#noteMask');
   var editorSheet = $('#editorSheet');
@@ -231,7 +229,7 @@
     toastTimer = setTimeout(function () {
       toastEl.classList.remove('show');
       setTimeout(function () { toastEl.hidden = true; }, 220);
-    }, 2200);
+    }, 2600);
   }
 
   function confirmDialog(text, title) {
@@ -246,6 +244,42 @@
   function closeConfirm(ok) {
     confirmMask.hidden = true;
     if (confirmResolve) { confirmResolve(!!ok); confirmResolve = null; }
+  }
+
+  function showOffline(err) {
+    if (offlineText) {
+      offlineText.textContent = '无法连接后端服务（' + (err && err.message ? err.message : '网络错误') +
+        '）。备忘录数据由服务端保存，请确认服务已启动后重试。';
+    }
+    offlineMask.hidden = false;
+  }
+
+  function hideOffline() {
+    offlineMask.hidden = true;
+  }
+
+  /* ---------------- 启动：从服务端拉取数据 ---------------- */
+
+  function boot() {
+    setSync('busy', '连接服务…');
+    emptyState.hidden = false;
+    var hint = $('#emptyState .empty-note p');
+    if (hint) hint.textContent = '正在连接服务…';
+
+    return api('GET', '/state').then(function (data) {
+      online = true;
+      state = normalize(data);
+      hideOffline();
+      setSync('ok');
+      sortSelect.value = state.settings.sort;
+      renderDeskGrid();
+      applyDesk();
+      renderAll();
+    }).catch(function (err) {
+      online = false;
+      setSync('offline');
+      showOffline(err);
+    });
   }
 
   /* ---------------- 渲染：侧栏 ---------------- */
@@ -280,14 +314,14 @@
     }
     catList.innerHTML = state.categories.map(function (c) {
       var count = countOf(function (n) { return n.categoryId === c.id; });
-      return '<li><div class="cat-item" data-cat="' + c.id + '" role="button" tabindex="0" aria-current="' +
+      return '<li><div class="cat-item" data-cat="' + esc(c.id) + '" role="button" tabindex="0" aria-current="' +
         (state.settings.view === c.id) + '">' +
         '<span class="cat-dot" style="--c:' + esc(c.color) + '"></span>' +
         '<span class="cat-name">' + esc(c.name) + '</span>' +
         '<span class="cat-count">' + count + '</span>' +
         '<span class="cat-tools">' +
-          '<button type="button" class="cat-tool" data-cat-edit="' + c.id + '" title="编辑分类">✎</button>' +
-          '<button type="button" class="cat-tool" data-cat-del="' + c.id + '" title="删除分类">×</button>' +
+          '<button type="button" class="cat-tool" data-cat-edit="' + esc(c.id) + '" title="编辑分类">✎</button>' +
+          '<button type="button" class="cat-tool" data-cat-del="' + esc(c.id) + '" title="删除分类">×</button>' +
         '</span>' +
         '</div></li>';
     }).join('');
@@ -363,7 +397,7 @@
       ? '<span class="todo-progress">' + done + '/' + note.todos.length + ' 已完成</span>'
       : '<span>文字笔记</span>';
 
-    return '<article class="card paper-' + note.paper + '" data-id="' + note.id + '" tabindex="0"' +
+    return '<article class="card paper-' + note.paper + '" data-id="' + esc(note.id) + '" tabindex="0"' +
       ' style="--tilt:' + tiltOf(note.id) + ';--shift:' + shiftOf(note.id) + '" aria-label="' + esc(note.title || '未命名') + '">' +
       decor +
       '<header class="card-head">' +
@@ -518,16 +552,12 @@
     noteDraft = null;
   }
 
-  function syncDraftFromInputs() {
-    if (!noteDraft) return;
-    noteDraft.title = noteTitle.value.trim();
-    if (noteDraft.type === 'text') noteDraft.content = noteContent.value.trim();
-  }
-
   function submitNote(e) {
     if (e) e.preventDefault();
     if (!noteDraft) return;
-    syncDraftFromInputs();
+
+    noteDraft.title = noteTitle.value.trim();
+    if (noteDraft.type === 'text') noteDraft.content = noteContent.value.trim();
 
     var todos = noteDraft.type === 'todo'
       ? noteDraft.todos
@@ -544,20 +574,21 @@
     if (!title) title = (content.split('\n')[0] || todos[0].text).slice(0, 20);
 
     var ts = Date.now();
+    var saved;
     if (noteDraft.id) {
-      var target = state.notes.filter(function (n) { return n.id === noteDraft.id; })[0];
-      if (target) {
-        target.title = title;
-        target.type = noteDraft.type;
-        target.content = content;
-        target.todos = todos;
-        target.categoryId = noteDraft.categoryId || null;
-        target.paper = noteDraft.paper;
-        target.pinned = noteDraft.pinned;
-        target.updatedAt = ts;
-      }
+      var target = noteById(noteDraft.id);
+      if (!target) { closeEditor(); return; }
+      target.title = title;
+      target.type = noteDraft.type;
+      target.content = content;
+      target.todos = todos;
+      target.categoryId = noteDraft.categoryId || null;
+      target.paper = noteDraft.paper;
+      target.pinned = noteDraft.pinned;
+      target.updatedAt = ts;
+      saved = target;
     } else {
-      state.notes.unshift({
+      saved = {
         id: uid('n'),
         title: title,
         type: noteDraft.type,
@@ -568,14 +599,15 @@
         pinned: noteDraft.pinned,
         createdAt: ts,
         updatedAt: ts
-      });
+      };
+      state.notes.unshift(saved);
     }
 
     state.settings.lastPaper = noteDraft.paper;
-    save();
+    pushNote(saved);
+    pushSettings();
     closeEditor();
     renderAll();
-    toast('已保存');
   }
 
   function deleteNote() {
@@ -584,7 +616,7 @@
     confirmDialog('确定删除这条备忘录吗？删除后无法恢复。', '删除备忘录').then(function (ok) {
       if (!ok) return;
       state.notes = state.notes.filter(function (n) { return n.id !== id; });
-      save();
+      removeNote(id);
       closeEditor();
       renderAll();
       toast('已删除');
@@ -624,15 +656,20 @@
     var name = catName.value.trim();
     if (!name) { toast('分类名称不能为空'); catName.focus(); return; }
 
+    var saved;
     if (catDraft.id) {
       var target = state.categories.filter(function (c) { return c.id === catDraft.id; })[0];
-      if (target) { target.name = name; target.color = catDraft.color; }
+      if (!target) { closeCatEditor(); return; }
+      target.name = name;
+      target.color = catDraft.color;
+      saved = target;
     } else {
-      var created = { id: uid('cat'), name: name, color: catDraft.color };
-      state.categories.push(created);
-      state.settings.view = created.id;
+      saved = { id: uid('cat'), name: name, color: catDraft.color };
+      state.categories.push(saved);
+      state.settings.view = saved.id;
     }
-    save();
+    pushCat(saved);
+    pushSettings();
     closeCatEditor();
     renderAll();
     toast('分类已保存');
@@ -651,9 +688,8 @@
       state.notes.forEach(function (n) { if (n.categoryId === id) n.categoryId = null; });
       state.categories = state.categories.filter(function (c) { return c.id !== id; });
       if (state.settings.view === id) state.settings.view = 'all';
-      if (noteDraft && noteDraft.categoryId === id) noteDraft.categoryId = null;
-      save();
-      closeCatEditor();
+      removeCat(id);
+      pushSettings();
       renderAll();
       toast('分类已删除');
     });
@@ -666,7 +702,7 @@
     var viewBtn = e.target.closest('[data-view]');
     if (viewBtn) {
       state.settings.view = viewBtn.dataset.view;
-      save();
+      pushSettings();
       renderViews(); renderCats(); renderBoard();
       return;
     }
@@ -689,7 +725,7 @@
     var catItem = e.target.closest('[data-cat]');
     if (catItem && !e.target.closest('.cat-tool')) {
       state.settings.view = catItem.dataset.cat;
-      save();
+      pushSettings();
       renderViews(); renderCats(); renderBoard();
     }
   });
@@ -698,7 +734,7 @@
   board.addEventListener('click', function (e) {
     var card = e.target.closest('.card');
     if (!card) return;
-    var note = state.notes.filter(function (n) { return n.id === card.dataset.id; })[0];
+    var note = noteById(card.dataset.id);
     if (!note) return;
 
     var actBtn = e.target.closest('[data-act]');
@@ -707,7 +743,7 @@
       if (act === 'pin') {
         note.pinned = !note.pinned;
         note.updatedAt = Date.now();
-        save();
+        pushNote(note);
         renderBoard();
         toast(note.pinned ? '已固定到最前' : '已取消固定');
       } else if (act === 'edit') {
@@ -716,7 +752,7 @@
         confirmDialog('确定删除「' + (note.title || '未命名') + '」吗？删除后无法恢复。', '删除备忘录').then(function (ok) {
           if (!ok) return;
           state.notes = state.notes.filter(function (n) { return n.id !== note.id; });
-          save();
+          removeNote(note.id);
           renderAll();
           toast('已删除');
         });
@@ -738,7 +774,7 @@
         var done = note.todos.filter(function (t) { return t.done; }).length;
         prog.textContent = done + '/' + note.todos.length + ' 已完成';
       }
-      save();
+      pushNote(note);
       renderStats();
       return;
     }
@@ -751,7 +787,7 @@
     var card = e.target.closest('.card');
     if (!card || e.target.closest('button')) return;
     e.preventDefault();
-    var note = state.notes.filter(function (n) { return n.id === card.dataset.id; })[0];
+    var note = noteById(card.dataset.id);
     if (note) openEditor(note);
   });
 
@@ -765,7 +801,7 @@
 
   sortSelect.addEventListener('change', function () {
     state.settings.sort = sortSelect.value;
-    save();
+    pushSettings();
     renderBoard();
   });
 
@@ -780,7 +816,7 @@
     if (!opt) return;
     state.settings.desk = opt.dataset.desk;
     applyDesk();
-    save();
+    pushSettings();
   });
 
   document.addEventListener('click', function (e) {
@@ -894,6 +930,9 @@
   $('#confirmYes').addEventListener('click', function () { closeConfirm(true); });
   $('#confirmNo').addEventListener('click', function () { closeConfirm(false); });
 
+  // 断线重试
+  $('#retryBtn').addEventListener('click', function () { boot(); });
+
   // 点击遮罩关闭
   noteMask.addEventListener('mousedown', function (e) { if (e.target === noteMask) closeEditor(); });
   catMask.addEventListener('mousedown', function (e) { if (e.target === catMask) closeCatEditor(); });
@@ -914,8 +953,5 @@
 
   /* ---------------- 启动 ---------------- */
 
-  sortSelect.value = state.settings.sort;
-  renderDeskGrid();
-  applyDesk();
-  renderAll();
+  boot();
 })();
