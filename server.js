@@ -31,6 +31,7 @@ const http = require('http');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const crypto = require('crypto');
 
 const PORT = parseInt(process.env.PORT, 10) || 5058;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -38,6 +39,8 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'store.json');
 const ROOT = __dirname;
 const ALLOW_ANON = process.env.ALLOW_ANON === '1';
+// 网关令牌：由 Nginx 注入 X-Gateway-Token，用于拒绝「绕过网关、直接伪造 X-User-Id」的请求
+const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || '';
 
 const MAX_BODY = 512 * 1024; // 512KB
 const PAPERS = ['lined', 'grid', 'plain', 'kraft', 'sticky', 'mint'];
@@ -59,6 +62,13 @@ function uid(prefix) {
 
 function defaultSettings() {
   return { desk: 'wood', sort: 'updated', view: 'all', lastPaper: 'lined' };
+}
+
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (!ba.length || ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
 }
 
 /* ------------------------------ 数据校验 ------------------------------ */
@@ -315,6 +325,11 @@ async function handleApi(req, res, sub) {
   try {
     if (parts[0] === 'health') {
       return sendJSON(res, 200, { ok: true, rev: store.rev, spaces: Object.keys(store.spaces).length });
+    }
+
+    // 先验网关令牌：确认请求确实经过 Nginx（否则任何人都能自带 X-User-Id 冒充）
+    if (GATEWAY_TOKEN && !safeEqual(req.headers['x-gateway-token'] || '', GATEWAY_TOKEN)) {
+      return sendJSON(res, 401, { error: 'unauthorized', hint: '请通过站点网关访问' });
     }
 
     // 身份来自网关（Nginx auth_request_set → proxy_set_header），客户端无法伪造
