@@ -870,12 +870,11 @@
   var suppressClick = false; // 拖拽结束后抑制紧随其后的一次 click，避免误开编辑器
   var DRAG_THRESHOLD = 6;    // 位移阈值：小于它视为点击（保留「点卡片即编辑」）
 
-  // 首次拖动时自动切到手动排序
+  // 拖动/键盘调序后切到手动排序，并把下拉同步到对应选项（不额外弹提示）
   function ensureManualSort() {
-    if (state.settings.sort === 'manual') return false;
+    if (state.settings.sort === 'manual') return;
     state.settings.sort = 'manual';
     if (sortSelect) sortSelect.value = 'manual';
-    return true;
   }
 
   // 把一段可见卡片的 id 序列落到 settings.order：
@@ -956,10 +955,9 @@
     suppressClick = true;
     setTimeout(function () { suppressClick = false; }, 350);
 
-    var switched = ensureManualSort();
+    ensureManualSort();
     applyOrder(seq);
     renderAll();
-    toast(switched ? '已切换为手动排序' : '顺序已更新');
   }
 
   // 键盘等价操作：Alt + 方向键把卡片前移/后移
@@ -970,12 +968,11 @@
     var j = i + dir;
     if (j < 0 || j >= seq.length) return;
     seq.splice(j, 0, seq.splice(i, 1)[0]);
-    var switched = ensureManualSort();
+    ensureManualSort();
     applyOrder(seq);
     renderAll();
     var el = board.querySelector('[data-id="' + note.id + '"]');
     if (el) el.focus();
-    toast(switched ? '已切换为手动排序' : '顺序已更新');
   }
 
   board.addEventListener('pointerdown', function (e) {
