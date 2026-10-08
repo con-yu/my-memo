@@ -44,7 +44,7 @@ const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || '';
 
 const MAX_BODY = 512 * 1024; // 512KB
 const PAPERS = ['lined', 'grid', 'plain', 'kraft', 'sticky', 'mint'];
-const DESKS = ['wood', 'cork', 'linen', 'felt', 'slate'];
+const DESKS = ['ash', 'sand', 'mist', 'oak', 'linen', 'cork', 'wood', 'felt', 'slate'];
 const SORTS = ['updated', 'created', 'title'];
 const VIEW_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -53,6 +53,30 @@ const STATIC_MIME = {
   'styles.css': 'text/css; charset=utf-8',
   'app.js': 'application/javascript; charset=utf-8'
 };
+
+// HTML 是 no-cache（每次校验），而 CSS/JS 允许缓存 1 小时。
+// 若只更新了 HTML（或反之），浏览器会拿到新 HTML 却仍用旧脚本，出现新旧不匹配。
+// 因此返回 HTML 时把「资源指纹」注入到引用上：内容一变 URL 就变，必然重新拉取；
+// 内容没变时 URL 不变，浏览器与 CF 边缘缓存照旧生效。
+const ASSET_FILES = ['styles.css', 'app.js'];
+
+function assetStamp() {
+  return ASSET_FILES.map((name) => {
+    try {
+      const st = fs.statSync(path.join(ROOT, name));
+      return st.size.toString(36) + '-' + Math.floor(st.mtimeMs / 1000).toString(36);
+    } catch (err) {
+      return '0';
+    }
+  }).join('.');
+}
+
+function injectAssetStamp(html) {
+  const stamp = assetStamp();
+  return html
+    .replace('href="styles.css"', 'href="styles.css?v=' + stamp + '"')
+    .replace('src="app.js"', 'src="app.js?v=' + stamp + '"');
+}
 
 /* ------------------------------ 工具 ------------------------------ */
 
@@ -407,6 +431,8 @@ function handleStatic(req, res, pathname) {
         res.end('读取静态文件失败: ' + err2.message);
         return;
       }
+      // HTML 里的资源引用带上内容指纹，避免「页面已更新、脚本还是缓存的旧版」
+      if (isHtml) buf = Buffer.from(injectAssetStamp(buf.toString('utf8')), 'utf8');
       res.writeHead(200, Object.assign({
         'Content-Type': STATIC_MIME[name],
         'Content-Length': buf.length

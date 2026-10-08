@@ -55,6 +55,42 @@ body {
 }
 
 /* ---------- 桌面材质 ---------- */
+/* 低饱和浅色款：纹理压得很淡，长时间盯着不累眼 */
+body[data-desk="ash"] {
+  background-color: #c7c7c4;
+  background-image:
+    radial-gradient(ellipse at 50% -20%, rgba(255, 255, 255, .55), transparent 62%),
+    repeating-linear-gradient(102deg, rgba(90, 92, 95, .032) 0 2px, transparent 2px 19px),
+    linear-gradient(172deg, #d8d8d5, #c9c9c6 55%, #b7b7b4);
+}
+
+body[data-desk="sand"] {
+  background-color: #ddd2bd;
+  background-image:
+    radial-gradient(ellipse at 50% -20%, rgba(255, 253, 245, .5), transparent 60%),
+    radial-gradient(circle at 16% 24%, rgba(150, 130, 95, .11) 0 1.5px, transparent 1.9px),
+    radial-gradient(circle at 72% 68%, rgba(150, 130, 95, .09) 0 1.3px, transparent 1.7px),
+    linear-gradient(174deg, #eae1d0, #dcd0bb 58%, #ccbda6);
+  background-size: auto, 14px 16px, 19px 13px, auto;
+}
+
+body[data-desk="mist"] {
+  background-color: #c4cbd1;
+  background-image:
+    radial-gradient(ellipse at 50% -20%, rgba(255, 255, 255, .5), transparent 62%),
+    repeating-linear-gradient(96deg, rgba(70, 90, 110, .038) 0 2px, transparent 2px 21px),
+    linear-gradient(172deg, #d6dce1, #c7cdd4 55%, #b4bbc3);
+}
+
+body[data-desk="oak"] {
+  background-color: #d9c8ac;
+  background-image:
+    radial-gradient(ellipse at 50% -20%, rgba(255, 252, 244, .5), transparent 60%),
+    repeating-linear-gradient(91deg, rgba(120, 90, 55, .045) 0 2px, rgba(255, 255, 255, .02) 2px 6px, transparent 6px 15px),
+    repeating-linear-gradient(88deg, rgba(110, 80, 45, .03) 0 1px, transparent 1px 34px),
+    linear-gradient(172deg, #e7d9c1, #d6c4a6 52%, #c5b194);
+}
+
 body[data-desk="wood"] {
   background-color: #4a2f1b;
   background-image:
@@ -357,32 +393,10 @@ body[data-desk="slate"] {
 
 .mini-btn:hover { background: rgba(255, 255, 255, .18); }
 
-/* ---------- 桌面选择弹层 ---------- */
-.desk-picker { position: relative; }
-
-.popover {
-  position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
-  width: 300px;
-  padding: 14px;
-  border-radius: 12px;
-  background: linear-gradient(180deg, #fdf9f0, #f1e9db);
-  border: 1px solid rgba(0, 0, 0, .22);
-  box-shadow: 0 24px 44px -22px rgba(0, 0, 0, .85), 0 2px 6px rgba(0, 0, 0, .25);
-  z-index: 50;
-}
-
-.popover-title {
-  margin: 0 0 10px;
-  font-family: var(--hand);
-  font-size: 15px;
-  color: var(--ink);
-}
-
+/* ---------- 桌面材质（与新建备忘录一致的弹窗） ---------- */
 .desk-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
 }
 
@@ -418,6 +432,27 @@ body[data-desk="slate"] {
 }
 
 /* 材质缩略图 */
+.sw-ash {
+  background-color: #c7c7c4;
+  background-image: repeating-linear-gradient(102deg, rgba(90, 92, 95, .07) 0 2px, transparent 2px 16px), linear-gradient(172deg, #d8d8d5, #b7b7b4);
+}
+
+.sw-sand {
+  background-color: #ddd2bd;
+  background-image: radial-gradient(circle at 22% 32%, rgba(150, 130, 95, .24) 0 1.4px, transparent 1.8px), radial-gradient(circle at 68% 72%, rgba(150, 130, 95, .2) 0 1.2px, transparent 1.6px), linear-gradient(174deg, #eae1d0, #ccbda6);
+  background-size: 13px 15px, 17px 12px, auto;
+}
+
+.sw-mist {
+  background-color: #c4cbd1;
+  background-image: repeating-linear-gradient(96deg, rgba(70, 90, 110, .07) 0 2px, transparent 2px 18px), linear-gradient(172deg, #d6dce1, #b4bbc3);
+}
+
+.sw-oak {
+  background-color: #d9c8ac;
+  background-image: repeating-linear-gradient(91deg, rgba(120, 90, 55, .09) 0 2px, transparent 2px 8px), linear-gradient(172deg, #e7d9c1, #c5b194);
+}
+
 .sw-wood {
   background-color: #4a2f1b;
   background-image: repeating-linear-gradient(91deg, rgba(0, 0, 0, .18) 0 2px, transparent 2px 7px), linear-gradient(172deg, #6f4726, #3c2210);
@@ -773,41 +808,74 @@ body[data-desk="slate"] {
   line-height: 1.65;
 }
 
+/* 待办前缀圆点：未完成 = 空心圆环，完成 = 实心绿圆 + 白色手写勾 */
 .todo-check {
+  position: relative;
   flex: none;
-  width: 19px;
-  height: 19px;
-  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  margin-top: 2.5px;
   padding: 0;
-  border: 1.6px solid rgba(46, 41, 37, .45);
-  border-radius: 3px;
-  background: rgba(255, 255, 255, .55);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .12);
+  border: 1.6px solid rgba(46, 41, 37, .38);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 34%, rgba(255, 255, 255, .96), rgba(255, 255, 255, .58));
+  box-shadow: 0 1px 1.5px rgba(60, 45, 30, .1);
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: border-color .2s ease, background .2s ease;
+  transition: border-color .2s ease, background .24s ease, box-shadow .22s ease, transform .16s ease;
 }
 
-.todo-check .tick { width: 16px; height: 16px; display: block; }
+.todo-check:hover {
+  border-color: rgba(46, 41, 37, .66);
+  box-shadow: 0 1px 3px rgba(60, 45, 30, .18), 0 0 0 3px rgba(78, 160, 110, .12);
+}
+
+.todo-check:active { transform: scale(.88); }
+
+.todo-check:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(192, 102, 47, .32);
+}
+
+.todo-check .tick { width: 13px; height: 13px; display: block; }
 
 .todo-check .tick path {
   fill: none;
-  stroke: #2f7d4f;
-  stroke-width: 2.6;
+  stroke: #fff;
+  stroke-width: 3;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-dasharray: 26;
   stroke-dashoffset: 26;
-  transition: stroke-dashoffset .32s cubic-bezier(.4, 1.4, .6, 1);
+  transition: stroke-dashoffset .3s cubic-bezier(.4, 1.4, .6, 1);
 }
 
-.todo-item.done .todo-check {
-  border-color: #2f7d4f;
-  background: rgba(72, 160, 110, .16);
+/* 勾选态：卡片与编辑弹窗共用（按 aria-checked 判定），始终保持绿色 */
+.todo-check[aria-checked="true"] {
+  border-color: #4a9e6b;
+  background: radial-gradient(circle at 50% 32%, #63b985, #40905e);
+  box-shadow: 0 1px 3px rgba(46, 110, 74, .3), inset 0 1px 0 rgba(255, 255, 255, .3);
 }
 
-.todo-item.done .todo-check .tick path { stroke-dashoffset: 0; }
+.todo-check[aria-checked="true"]:hover {
+  border-color: #4a9e6b;
+  box-shadow: 0 1px 4px rgba(46, 110, 74, .38), 0 0 0 3px rgba(78, 160, 110, .18);
+}
+
+.todo-check[aria-checked="true"]:focus-visible {
+  box-shadow: 0 0 0 3px rgba(192, 102, 47, .32), 0 1px 3px rgba(46, 110, 74, .3);
+}
+
+.todo-check[aria-checked="true"] .tick path { stroke-dashoffset: 0; }
+
+/* 深色牛皮纸上的圆点：仅未勾选时加深描边、换纸色底，保证对比度 */
+.paper-kraft .todo-check:not([aria-checked="true"]) {
+  border-color: rgba(74, 51, 22, .5);
+  background: radial-gradient(circle at 50% 34%, rgba(255, 252, 244, .96), rgba(250, 240, 222, .62));
+}
+
+.paper-kraft .todo-check:not([aria-checked="true"]):hover { border-color: rgba(74, 51, 22, .74); }
 
 .todo-text {
   position: relative;
@@ -1020,6 +1088,26 @@ body[data-desk="slate"] {
   font-weight: 600;
 }
 
+/* 编辑已有备忘：类型锁定，只保留当前类型的标签态，不可切换 */
+.type-switch[data-locked="true"] {
+  background: rgba(46, 41, 37, .055);
+  box-shadow: none;
+}
+
+.type-switch[data-locked="true"] .type-btn:not([aria-selected="true"]) { display: none; }
+
+.type-switch[data-locked="true"] .type-btn {
+  padding: 5px 12px;
+  cursor: default;
+}
+
+.type-switch[data-locked="true"] .type-btn[aria-selected="true"] {
+  background: transparent;
+  box-shadow: none;
+  color: rgba(46, 41, 37, .7);
+  cursor: default;
+}
+
 .editor-body { min-height: 0; }
 
 .field { display: block; }
@@ -1095,7 +1183,13 @@ body[data-desk="slate"] {
   outline: 0;
 }
 
-.todo-edit-item.done .todo-input { color: #9a9088; text-decoration: line-through; }
+/* 编辑态已完成的待办：文字变灰，删除线用与卡片手绘划线一致的红棕色 */
+.todo-edit-item.done .todo-input {
+  color: #9a9088;
+  text-decoration: line-through;
+  text-decoration-color: rgba(186, 62, 56, .7);
+  text-decoration-thickness: 1.5px;
+}
 
 .todo-del {
   width: 24px;

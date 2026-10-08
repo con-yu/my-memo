@@ -37,16 +37,10 @@
       </select>
     </label>
 
-    <div class="desk-picker">
-      <button class="btn btn-ghost" id="deskBtn" aria-expanded="false" aria-controls="deskPopover">
-        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2" /><path d="M3 15.5l4.6-4 3.9 3.2 3.1-2.8L21 16" /></svg>
-        桌面
-      </button>
-      <div class="popover" id="deskPopover" hidden>
-        <p class="popover-title">桌面材质</p>
-        <div class="desk-grid" id="deskGrid"></div>
-      </div>
-    </div>
+    <button class="btn btn-ghost" id="deskBtn" aria-expanded="false" aria-haspopup="dialog" aria-controls="deskMask">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2" /><path d="M3 15.5l4.6-4 3.9 3.2 3.1-2.8L21 16" /></svg>
+      桌面
+    </button>
 
     <button class="btn btn-primary" id="newNoteBtn">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5v13M5.5 12h13" /></svg>
@@ -153,6 +147,18 @@
         <button type="submit" class="btn btn-primary">保存</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- ============ 桌面材质 ============ -->
+<div class="mask" id="deskMask" hidden>
+  <div class="sheet sheet--sm paper-plain" role="dialog" aria-modal="true" aria-label="选择桌面材质">
+    <h3 class="sheet-title">桌面材质</h3>
+    <div class="desk-grid" id="deskGrid"></div>
+    <div class="editor-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary" id="deskDoneBtn">完成</button>
+    </div>
   </div>
 </div>
 

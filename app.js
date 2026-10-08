@@ -27,10 +27,15 @@
     mint:   'linear-gradient(180deg, #dcf5e7, #c2e8d3)'
   };
 
+  // 由浅到深排列，浅色款存在感低，更适合长时间盯着看
   var DESKS = [
-    { id: 'wood',  name: '实木桌面' },
-    { id: 'cork',  name: '软木板' },
+    { id: 'ash',   name: '浅灰' },
+    { id: 'sand',  name: '暖砂' },
+    { id: 'mist',  name: '雾蓝' },
+    { id: 'oak',   name: '浅橡木' },
     { id: 'linen', name: '亚麻桌布' },
+    { id: 'cork',  name: '软木板' },
+    { id: 'wood',  name: '实木桌面' },
     { id: 'felt',  name: '墨绿毛毡' },
     { id: 'slate', name: '深色石板' }
   ];
@@ -212,7 +217,7 @@
   var searchInput = $('#searchInput');
   var sortSelect = $('#sortSelect');
   var deskGrid = $('#deskGrid');
-  var deskPopover = $('#deskPopover');
+  var deskMask = $('#deskMask');
   var deskBtn = $('#deskBtn');
   var syncEl = $('#sync');
   var syncText = $('#syncText');
@@ -499,6 +504,16 @@
     });
   }
 
+  function openDesk() {
+    deskMask.hidden = false;
+    deskBtn.setAttribute('aria-expanded', 'true');
+  }
+
+  function closeDesk() {
+    deskMask.hidden = true;
+    deskBtn.setAttribute('aria-expanded', 'false');
+  }
+
   /* ---------------- 备忘录编辑 ---------------- */
 
   function setType(type) {
@@ -508,6 +523,15 @@
     });
     contentField.hidden = type === 'todo';
     todoEditor.hidden = type !== 'todo';
+  }
+
+  // 已存在的备忘不允许切换类型（新建时可自由选择）
+  function setTypeLocked(locked) {
+    typeSwitch.dataset.locked = locked ? 'true' : 'false';
+    Array.prototype.forEach.call(typeSwitch.children, function (btn) {
+      btn.disabled = locked;
+      btn.setAttribute('aria-disabled', String(locked));
+    });
   }
 
   function renderTodoEdit(focusId) {
@@ -582,6 +606,7 @@
     noteTitle.value = noteDraft.title || '';
     noteContent.value = noteDraft.content || '';
     editorSheet.className = 'sheet paper-' + noteDraft.paper;
+    setTypeLocked(!!noteDraft.id);
     setType(noteDraft.type);
     renderTodoEdit();
     renderCatChips();
@@ -848,10 +873,8 @@
     renderBoard();
   });
 
-  deskBtn.addEventListener('click', function (e) {
-    e.stopPropagation();
-    deskPopover.hidden = !deskPopover.hidden;
-    deskBtn.setAttribute('aria-expanded', String(!deskPopover.hidden));
+  deskBtn.addEventListener('click', function () {
+    if (deskMask.hidden) openDesk(); else closeDesk();
   });
 
   deskGrid.addEventListener('click', function (e) {
@@ -862,19 +885,16 @@
     pushSettings();
   });
 
-  document.addEventListener('click', function (e) {
-    if (!deskPopover.hidden && !e.target.closest('.desk-picker')) {
-      deskPopover.hidden = true;
-      deskBtn.setAttribute('aria-expanded', 'false');
-    }
-  });
+  $('#deskDoneBtn').addEventListener('click', closeDesk);
+  deskMask.addEventListener('mousedown', function (e) { if (e.target === deskMask) closeDesk(); });
 
   $('#newCatBtn').addEventListener('click', function () { openCatEditor(null); });
 
   // 备忘录编辑弹窗
   typeSwitch.addEventListener('click', function (e) {
+    if (typeSwitch.dataset.locked === 'true') return;
     var btn = e.target.closest('[data-type]');
-    if (btn) setType(btn.dataset.type);
+    if (btn && !btn.disabled) setType(btn.dataset.type);
   });
 
   catChips.addEventListener('click', function (e) {
@@ -987,7 +1007,7 @@
       if (!confirmMask.hidden) { closeConfirm(false); return; }
       if (!catMask.hidden) { closeCatEditor(); return; }
       if (!noteMask.hidden) { closeEditor(); return; }
-      if (!deskPopover.hidden) { deskPopover.hidden = true; deskBtn.setAttribute('aria-expanded', 'false'); return; }
+      if (!deskMask.hidden) { closeDesk(); return; }
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !noteMask.hidden) {
       submitNote(e);
