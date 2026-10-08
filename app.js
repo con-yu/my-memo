@@ -41,7 +41,7 @@
   ];
 
   var CAT_COLORS = ['#e8734a', '#e0a72e', '#6fae5a', '#4a90e2', '#8b6bb1', '#d95c8a', '#4fb3b3', '#8a8f98'];
-  var SORTS = ['updated', 'created', 'title'];
+  var SORTS = ['updated', 'created', 'title', 'manual'];
   var DESK_IDS = DESKS.map(function (d) { return d.id; });
 
   /* ---------------- 工具 ---------------- */
@@ -65,7 +65,8 @@
   }
 
   // 依据 id 生成稳定的纸张倾斜与错落偏移，避免每次渲染跳动
-  function tiltOf(id) { return (((hashOf(id) % 21) - 10) / 12).toFixed(2) + 'deg'; }
+  // 摆放倾角：按 id 散列在 ±1.25° 内随手摆放的样子（比原来略大，减少「方正」感）
+  function tiltOf(id) { return (((hashOf(id) % 21) - 10) / 8).toFixed(2) + 'deg'; }
   function shiftOf(id) { return (hashOf(id + 'shift') % 3) * 7 + 'px'; }
 
   function fmtTime(ts) {
@@ -109,6 +110,7 @@
     if (SORTS.indexOf(s.sort) < 0) s.sort = 'updated';
     if (!PAPER_PREVIEW[s.lastPaper]) s.lastPaper = 'lined';
     if (typeof s.view !== 'string' || !s.view) s.view = 'all';
+    if (!Array.isArray(s.order)) s.order = [];
 
     return {
       rev: typeof d.rev === 'number' ? d.rev : 0,
@@ -140,28 +142,14 @@
     });
   }
 
-  function setSync(mode, text) {
-    if (!syncEl) return;
-    syncEl.dataset.state = mode;
-    syncText.textContent = text || ({
-      ok: '已同步到服务器',
-      busy: '同步中…',
-      error: '同步失败',
-      offline: '未连接服务'
-    }[mode] || '');
-  }
-
   // 所有写操作的统一出口：在线时走后端 API，失败给出明确提示
   function push(path, method, body) {
     if (!online) {
-      setSync('offline');
       toast('未连接到服务，改动无法保存');
       return Promise.resolve(null);
     }
-    setSync('busy');
     return api(method, path, body).then(function (res) {
       if (res && typeof res.rev === 'number') state.rev = res.rev;
-      setSync('ok');
       return res ? res.data : null;
     }).catch(function (err) {
       if (err.status === 401) {
@@ -170,10 +158,7 @@
       }
       if (typeof err.status === 'undefined') {
         online = false;
-        setSync('offline');
         showOffline(err);
-      } else {
-        setSync('error');
       }
       toast('保存失败：' + err.message);
       return null;
@@ -184,23 +169,47 @@
   function removeNote(id) { return push('/notes/' + encodeURIComponent(id), 'DELETE'); }
   function pushCat(cat) { return push('/categories/' + encodeURIComponent(cat.id), 'PUT', cat); }
   function removeCat(id) { return push('/categories/' + encodeURIComponent(id), 'DELETE'); }
-  // 偏好类改动（切视图 / 换桌面 / 排序 / 纸张）做合并防抖：
+  // 偏好类改动（切视图 / 换桌面 / 排序 / 纸张 / 手动顺序）做合并防抖：
   // 每次 PATCH 都要穿过 Cloudflare 隧道（单次 1s+），连续操作合并成一次能明显减少等待。
+  // 关键：只提交「相对上次同步结果真正变化」的字段。否则另一个较早打开的标签页
+  // 在自身编辑操作里带出的陈旧快照，会把它没碰过的字段（尤其是手动排序 order）整体覆盖掉。
   var settingsTimer = null;
+  var settingsSynced = null; // 上一次同步成功后、服务端那份偏好的快照
+
+  function settingsDiff() {
+    if (!settingsSynced) return state.settings; // 还没同步过，整体提交
+    var body = {};
+    Object.keys(state.settings).forEach(function (k) {
+      if (JSON.stringify(settingsSynced[k]) !== JSON.stringify(state.settings[k])) body[k] = state.settings[k];
+    });
+    return body;
+  }
+
+  function flushSettingsNow() {
+    settingsTimer = null;
+    var body = settingsDiff();
+    if (!Object.keys(body).length) return Promise.resolve(null); // 没有变化就不打扰服务端
+    return push('/settings', 'PATCH', body).then(function (data) {
+      // 以服务端合并后的结果为准，后续 diff 基于它计算
+      settingsSynced = data || JSON.parse(JSON.stringify(state.settings));
+      return data;
+    });
+  }
+
   function pushSettings(immediate) {
     clearTimeout(settingsTimer);
     settingsTimer = null;
-    if (immediate) return push('/settings', 'PATCH', state.settings);
-    settingsTimer = setTimeout(function () {
-      settingsTimer = null;
-      push('/settings', 'PATCH', state.settings);
-    }, 600);
+    if (immediate) return flushSettingsNow();
+    settingsTimer = setTimeout(flushSettingsNow, 600);
     return Promise.resolve(null);
   }
 
   // 页面隐藏/离开前把待发送的偏好立即提交，避免防抖期间丢改动
   function flushSettings() {
-    if (settingsTimer) pushSettings(true);
+    if (settingsTimer) {
+      clearTimeout(settingsTimer);
+      flushSettingsNow();
+    }
   }
   window.addEventListener('pagehide', flushSettings);
   document.addEventListener('visibilitychange', function () {
@@ -219,8 +228,7 @@
   var deskGrid = $('#deskGrid');
   var deskMask = $('#deskMask');
   var deskBtn = $('#deskBtn');
-  var syncEl = $('#sync');
-  var syncText = $('#syncText');
+  var deskPreview = $('#deskPreview');
   var offlineMask = $('#offlineMask');
   var offlineText = $('#offlineText');
 
@@ -236,6 +244,7 @@
   var catChips = $('#catChips');
   var paperChips = $('#paperChips');
   var deleteNoteBtn = $('#deleteNoteBtn');
+  var copyNoteBtn = $('#copyNoteBtn');
   var editorMeta = $('#editorMeta');
 
   var catMask = $('#catMask');
@@ -261,6 +270,55 @@
       toastEl.classList.remove('show');
       setTimeout(function () { toastEl.hidden = true; }, 220);
     }, 2600);
+  }
+
+  // 复制文本到剪贴板：优先 Clipboard API（要求 HTTPS / localhost），
+  // 站点以 HTTP + IP 直连时该 API 不存在，降级为 execCommand，避免「点了没反应」。
+  function writeClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(function () {
+        return true;
+      }, function () {
+        return legacyCopy(text);
+      });
+    }
+    return Promise.resolve(legacyCopy(text));
+  }
+
+  function legacyCopy(text) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      var ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  // 复制并统一反馈（卡片的复制按钮与编辑器里的按钮共用）
+  function copyText(text) {
+    var value = String(text == null ? '' : text);
+    if (!value.trim()) {
+      toast('这条笔记没有可复制的内容');
+      return;
+    }
+    writeClipboard(value).then(function (ok) {
+      toast(ok ? '已复制全文' : '复制失败，请手动选中复制');
+    });
+  }
+
+  // 卡片上的「复制全文」：卡片里正文是截断展示的，这里复制完整正文（不含标题）
+  function copyNote(note) {
+    copyText(note.content);
   }
 
   function confirmDialog(text, title) {
@@ -291,7 +349,6 @@
 
   // 会话失效（登录过期/被登出）→ 去登录页，登录后回到当前地址
   function gotoLogin() {
-    setSync('offline', '需要重新登录');
     var next = location.pathname + location.search;
     setTimeout(function () {
       location.href = '/login?next=' + encodeURIComponent(next);
@@ -301,7 +358,6 @@
   /* ---------------- 启动：从服务端拉取数据 ---------------- */
 
   function boot() {
-    setSync('busy', '连接服务…');
     emptyState.hidden = false;
     var hint = $('#emptyState .empty-note p');
     if (hint) hint.textContent = '正在连接服务…';
@@ -309,8 +365,8 @@
     return api('GET', '/state').then(function (data) {
       online = true;
       state = normalize(data);
+      settingsSynced = JSON.parse(JSON.stringify(state.settings)); // 同步基线
       hideOffline();
-      setSync('ok');
       sortSelect.value = state.settings.sort;
       renderDeskGrid();
       applyDesk();
@@ -321,7 +377,6 @@
         return;
       }
       online = false;
-      setSync('offline');
       showOffline(err);
     });
   }
@@ -384,7 +439,7 @@
 
   /* ---------------- 渲染：卡片 ---------------- */
 
-  function visibleNotes() {
+  function filteredNotes() {
     var view = state.settings.view;
     var list = state.notes.slice();
 
@@ -401,15 +456,54 @@
           n.todos.some(function (t) { return (t.text || '').toLowerCase().indexOf(q) >= 0; });
       });
     }
+    return list;
+  }
 
+  // 排序规则（固定在最前，其次按所选方式）。手动排序用 settings.order 里记录的 id 序列。
+  function sortNotes(list) {
     var sort = state.settings.sort;
+    var pos = {};
+    (state.settings.order || []).forEach(function (id, i) { pos[id] = i; });
+
     list.sort(function (a, b) {
       if (!!b.pinned - !!a.pinned) return (!!b.pinned - !!a.pinned);
+      if (sort === 'manual') {
+        var ia = pos[a.id];
+        var ib = pos[b.id];
+        if (ia === undefined && ib === undefined) return b.updatedAt - a.updatedAt;
+        if (ia === undefined) return -1; // 还没排进序列的新笔记放最前
+        if (ib === undefined) return 1;
+        return ia - ib;
+      }
       if (sort === 'created') return b.createdAt - a.createdAt;
       if (sort === 'title') return String(a.title || '').localeCompare(String(b.title || ''), 'zh-Hans-CN');
       return b.updatedAt - a.updatedAt;
     });
     return list;
+  }
+
+  function visibleNotes() {
+    return sortNotes(filteredNotes());
+  }
+
+  // 编辑保存后把这张便签提到「固定组之后的第一位」：
+  // 固定便签仍然更靠前（保持 ★ 的语义），其余笔记的相对顺序不变。
+  function promoteNote(note) {
+    var ids = state.notes.map(function (n) { return n.id; });
+    var order = (state.settings.order || []).filter(function (id) {
+      return id !== note.id && ids.indexOf(id) >= 0;
+    });
+
+    // 还没建立过手动顺序（从没拖过）：以当前显示顺序为底，避免把顺序信息丢掉
+    if (!order.length) order = sortNotes(state.notes.slice()).map(function (n) { return n.id; });
+    order = order.filter(function (id) { return id !== note.id; });
+
+    // 目标下标 = 它前面还有几张固定便签（自己若已固定则直接进固定组最前）
+    var pinnedAhead = state.notes.filter(function (n) { return n.pinned && n.id !== note.id; }).length;
+    order.splice(note.pinned ? 0 : pinnedAhead, 0, note.id);
+
+    state.settings.order = order;
+    pushSettings();
   }
 
   function todosHTML(note) {
@@ -428,10 +522,11 @@
     var cat = state.categories.filter(function (c) { return c.id === note.categoryId; })[0];
     var isTodo = note.type === 'todo';
     var done = note.todos.filter(function (t) { return t.done; }).length;
+    // 只有文字笔记且有正文时才提供复制（清单类内容不适合整体复制）
+    var canCopy = !isTodo && !!String(note.content || '').trim();
 
-    var decor = note.pinned
-      ? '<span class="card-pin" aria-hidden="true"></span>'
-      : (note.paper === 'sticky' || note.paper === 'mint' ? '<span class="card-tape" aria-hidden="true"></span>' : '');
+    // 固定样式统一为胶带：只有「已固定」的卡片才有标记，与纸张类型无关
+    var decor = note.pinned ? '<span class="card-tape" aria-hidden="true"></span>' : '';
 
     var body = isTodo
       ? (note.todos.length ? todosHTML(note) : '<p class="card-text">（空清单）</p>')
@@ -449,7 +544,7 @@
         '<span class="card-tools">' +
           '<button type="button" class="tool-btn' + (note.pinned ? ' on' : '') + '" data-act="pin" title="' +
             (note.pinned ? '取消固定' : '固定到最前') + '">' + (note.pinned ? '★' : '☆') + '</button>' +
-          '<button type="button" class="tool-btn" data-act="edit" title="编辑">✎</button>' +
+          (canCopy ? '<button type="button" class="tool-btn" data-act="copy" title="复制全文">📋</button>' : '') +
           '<button type="button" class="tool-btn" data-act="del" title="删除">🗑</button>' +
         '</span>' +
       '</header>' +
@@ -502,6 +597,8 @@
     Array.prototype.forEach.call(deskGrid.children, function (el) {
       el.setAttribute('aria-pressed', String(el.dataset.desk === state.settings.desk));
     });
+    // 按钮上的图标显示「当前桌面」的预览
+    if (deskPreview) deskPreview.className = 'desk-preview sw-' + state.settings.desk;
   }
 
   function openDesk() {
@@ -585,6 +682,8 @@
       };
       editorMeta.textContent = '创建于 ' + fmtTime(note.createdAt) + ' · 修改于 ' + fmtTime(note.updatedAt);
       deleteNoteBtn.hidden = false;
+      // 只有已存在的文字笔记才提供「复制全文」
+      copyNoteBtn.hidden = noteDraft.type !== 'text';
     } else {
       var preset = state.settings.view;
       var isCat = state.categories.some(function (c) { return c.id === preset; });
@@ -601,6 +700,7 @@
       };
       editorMeta.textContent = '';
       deleteNoteBtn.hidden = true;
+      copyNoteBtn.hidden = true;
     }
 
     noteTitle.value = noteDraft.title || '';
@@ -672,6 +772,7 @@
     }
 
     state.settings.lastPaper = noteDraft.paper;
+    promoteNote(saved); // 编辑/新建后自动排到「固定组之后的第一位」
     pushNote(saved);
     pushSettings();
     closeEditor();
@@ -763,6 +864,142 @@
     });
   }
 
+  /* ---------------- 拖动排序 ---------------- */
+
+  var drag = null;           // { id, el, startX, startY, active, placeholder }
+  var suppressClick = false; // 拖拽结束后抑制紧随其后的一次 click，避免误开编辑器
+  var DRAG_THRESHOLD = 6;    // 位移阈值：小于它视为点击（保留「点卡片即编辑」）
+
+  // 首次拖动时自动切到手动排序
+  function ensureManualSort() {
+    if (state.settings.sort === 'manual') return false;
+    state.settings.sort = 'manual';
+    if (sortSelect) sortSelect.value = 'manual';
+    return true;
+  }
+
+  // 把一段可见卡片的 id 序列落到 settings.order：
+  // 以「当前全量顺序」为底，可见笔记占据的槽位按新序列重排，被筛选掉的笔记位置保持不动
+  function applyOrder(sequence) {
+    var all = sortNotes(state.notes.slice()).map(function (n) { return n.id; });
+    var moved = {};
+    sequence.forEach(function (id) { moved[id] = true; });
+    var i = 0;
+    var next = all.map(function (id) { return moved[id] ? sequence[i++] : id; });
+    while (i < sequence.length) next.push(sequence[i++]);
+    state.settings.order = next;
+    pushSettings(true);
+  }
+
+  // 当前 DOM 里的卡片顺序（占位符所在位置即被拖卡片的新位置；
+  // 被拖的卡片自身已脱离文档流，用占位符代表它，避免重复计数）
+  function boardOrder() {
+    var seq = [];
+    Array.prototype.forEach.call(board.children, function (child) {
+      if (child === drag.placeholder) { seq.push(drag.id); return; }
+      if (child === drag.el) return;
+      if (child.classList && child.classList.contains('card')) seq.push(child.dataset.id);
+    });
+    return seq;
+  }
+
+  function startDrag() {
+    var el = drag.el;
+    var r = el.getBoundingClientRect();
+    el.style.width = r.width + 'px';
+    el.style.height = r.height + 'px';
+    el.style.left = r.left + 'px';
+    el.style.top = r.top + 'px';
+    el.classList.add('dragging');
+
+    // 占位符顶住原槽位，避免网格塌陷
+    var ph = document.createElement('div');
+    ph.className = 'card-placeholder';
+    ph.style.width = r.width + 'px';
+    ph.style.height = r.height + 'px';
+    el.parentNode.insertBefore(ph, el);
+    drag.placeholder = ph;
+
+    drag.active = true;
+    document.body.classList.add('is-dragging');
+    moveDrag(drag.startX, drag.startY);
+  }
+
+  function moveDrag(x, y) {
+    var el = drag.el;
+    el.style.transform = 'translate(' + (x - drag.startX) + 'px,' + (y - drag.startY) + 'px) rotate(0deg)';
+
+    // 被拖卡片设了 pointer-events:none，所以这里拿到的是它下面的卡片
+    var under = document.elementFromPoint(x, y);
+    var over = under && under.closest ? under.closest('.card') : null;
+    if (!over || over === el || over === drag.placeholder) return;
+
+    var r = over.getBoundingClientRect();
+    if (x < r.left + r.width / 2) board.insertBefore(drag.placeholder, over);
+    else board.insertBefore(drag.placeholder, over.nextSibling);
+  }
+
+  function endDrag() {
+    if (!drag) return;
+    var el = drag.el;
+    var ph = drag.placeholder;
+    if (!drag.active) { drag = null; return; } // 只是点击，交给 click 处理
+
+    var seq = boardOrder(); // 必须在清空 drag / 移除占位符之前取序
+    drag = null;
+
+    el.classList.remove('dragging');
+    el.removeAttribute('style');
+    if (ph && ph.parentNode) ph.parentNode.removeChild(ph);
+    document.body.classList.remove('is-dragging');
+
+    suppressClick = true;
+    setTimeout(function () { suppressClick = false; }, 350);
+
+    var switched = ensureManualSort();
+    applyOrder(seq);
+    renderAll();
+    toast(switched ? '已切换为手动排序' : '顺序已更新');
+  }
+
+  // 键盘等价操作：Alt + 方向键把卡片前移/后移
+  function moveNote(note, dir) {
+    var seq = sortNotes(state.notes.slice()).map(function (n) { return n.id; });
+    var i = seq.indexOf(note.id);
+    if (i < 0) return;
+    var j = i + dir;
+    if (j < 0 || j >= seq.length) return;
+    seq.splice(j, 0, seq.splice(i, 1)[0]);
+    var switched = ensureManualSort();
+    applyOrder(seq);
+    renderAll();
+    var el = board.querySelector('[data-id="' + note.id + '"]');
+    if (el) el.focus();
+    toast(switched ? '已切换为手动排序' : '顺序已更新');
+  }
+
+  board.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0 || drag) return;
+    if (e.target.closest('button, a, input, textarea, select')) return;
+    var card = e.target.closest('.card');
+    if (!card) return;
+    drag = { id: card.dataset.id, el: card, startX: e.clientX, startY: e.clientY, active: false, placeholder: null };
+  });
+
+  document.addEventListener('pointermove', function (e) {
+    if (!drag) return;
+    if (!drag.active) {
+      if (Math.abs(e.clientX - drag.startX) + Math.abs(e.clientY - drag.startY) < DRAG_THRESHOLD) return;
+      startDrag();
+      return;
+    }
+    e.preventDefault(); // 拖拽中不要选中文字
+    moveDrag(e.clientX, e.clientY);
+  }, { passive: false });
+
+  document.addEventListener('pointerup', endDrag);
+  document.addEventListener('pointercancel', endDrag);
+
   /* ---------------- 事件绑定 ---------------- */
 
   // 侧栏（限定在侧栏内，避免与编辑器里的分类 chip 冲突）
@@ -800,6 +1037,7 @@
 
   // 看板
   board.addEventListener('click', function (e) {
+    if (suppressClick) return; // 刚拖拽结束，这次 click 是拖动的尾巴
     var card = e.target.closest('.card');
     if (!card) return;
     var note = noteById(card.dataset.id);
@@ -814,8 +1052,8 @@
         pushNote(note);
         renderBoard();
         toast(note.pinned ? '已固定到最前' : '已取消固定');
-      } else if (act === 'edit') {
-        openEditor(note);
+      } else if (act === 'copy') {
+        copyNote(note);
       } else if (act === 'del') {
         confirmDialog('确定删除「' + (note.title || '未命名') + '」吗？删除后无法恢复。', '删除备忘录').then(function (ok) {
           if (!ok) return;
@@ -851,9 +1089,21 @@
   });
 
   board.addEventListener('keydown', function (e) {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
     var card = e.target.closest('.card');
-    if (!card || e.target.closest('button')) return;
+    if (!card) return;
+
+    // Alt + 方向键：把卡片在序列中前移/后移（拖动的键盘等价操作）
+    if (e.altKey && e.key.indexOf('Arrow') === 0) {
+      var note0 = noteById(card.dataset.id);
+      if (!note0) return;
+      e.preventDefault();
+      var back = (e.key === 'ArrowLeft' || e.key === 'ArrowUp');
+      moveNote(note0, back ? -1 : 1);
+      return;
+    }
+
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (e.target.closest('button')) return;
     e.preventDefault();
     var note = noteById(card.dataset.id);
     if (note) openEditor(note);
@@ -974,6 +1224,8 @@
 
   noteForm.addEventListener('submit', submitNote);
   deleteNoteBtn.addEventListener('click', deleteNote);
+  // 复制编辑器里当前的内容（含尚未保存的修改）
+  copyNoteBtn.addEventListener('click', function () { copyText(noteContent.value); });
   $('#cancelNoteBtn').addEventListener('click', closeEditor);
 
   // 分类弹窗

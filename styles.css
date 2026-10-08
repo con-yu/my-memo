@@ -12,11 +12,13 @@
   --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
 
   --radius: 14px;
+  /* 纸张投影：上缘被贴住（接触阴影很近很实），下缘翘起离桌（拖影更远更散） */
   --paper-shadow:
-    0 1px 0 rgba(255, 255, 255, .8) inset,
-    0 1px 2px rgba(0, 0, 0, .18),
-    0 8px 14px -8px rgba(0, 0, 0, .45),
-    0 20px 34px -22px rgba(0, 0, 0, .55);
+    0 1px 0 rgba(255, 255, 255, .82) inset,
+    0 1px 1px rgba(0, 0, 0, .13),
+    0 3px 5px -3px rgba(0, 0, 0, .3),
+    0 12px 20px -12px rgba(0, 0, 0, .48),
+    0 22px 36px -24px rgba(0, 0, 0, .5);
 
   /* 纸色 */
   --paper-lined: #fdfaf0;
@@ -293,6 +295,16 @@ body[data-desk="slate"] {
 
 .btn .ico { width: 17px; height: 17px; }
 
+/* 桌面按钮上的图标 = 当前桌面的预览（复用弹窗里的 .sw-* 材质背景） */
+.desk-preview {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  border-radius: 4px;
+  background-size: cover;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .28), 0 0 0 1px rgba(0, 0, 0, .32);
+}
+
 .btn:active { transform: translateY(1px); }
 
 .btn-primary {
@@ -329,41 +341,6 @@ body[data-desk="slate"] {
 }
 
 .btn-danger-ghost:hover { background: rgba(180, 70, 63, .1); }
-
-/* 同步状态指示 */
-.sync {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 40px;
-  padding: 0 13px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, .3);
-  border: 1px solid rgba(255, 255, 255, .12);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
-  font-size: 12px;
-  color: rgba(253, 246, 232, .76);
-  white-space: nowrap;
-}
-
-.sync-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #b9b2a6;
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, .06);
-  transition: background .2s ease, box-shadow .2s ease;
-}
-
-.sync[data-state="ok"] .sync-dot { background: #5fbf7f; box-shadow: 0 0 0 3px rgba(95, 191, 127, .2); }
-.sync[data-state="busy"] .sync-dot { background: #e0a72e; animation: syncPulse 1s ease-in-out infinite; }
-.sync[data-state="error"] .sync-dot { background: #d2564e; box-shadow: 0 0 0 3px rgba(210, 86, 78, .22); }
-.sync[data-state="offline"] .sync-dot { background: #d2564e; }
-
-@keyframes syncPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: .3; }
-}
 
 .offline-hint {
   margin: 0 0 4px;
@@ -627,7 +604,8 @@ body[data-desk="slate"] {
 .card {
   position: relative;
   padding: 16px 17px 13px;
-  border-radius: 3px;
+  /* 上缘被按平（角更利），下缘微微翘离桌面（角更圆、左右略不对称像手放上去的） */
+  border-radius: 2px 2px 8px 6px;
   box-shadow: var(--paper-shadow);
   transform: rotate(var(--tilt, 0deg)) translateY(var(--shift, 0px));
   transition: transform .3s cubic-bezier(.2, .8, .3, 1), box-shadow .3s ease;
@@ -636,6 +614,25 @@ body[data-desk="slate"] {
   display: flex;
   flex-direction: column;
   isolation: isolate;
+}
+
+/* 底部翘起：下缘先略暗（弯折背光）再提亮（翘起处受光），让纸看起来不是彻底平的 */
+.card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 24px;
+  border-radius: 0 0 8px 6px;
+  background: linear-gradient(180deg,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, .026) 44%,
+    rgba(0, 0, 0, .062) 80%,
+    rgba(255, 255, 255, .24) 93%,
+    rgba(255, 255, 255, .5) 100%);
+  pointer-events: none;
+  z-index: 1;
 }
 
 .card::after {
@@ -653,11 +650,41 @@ body[data-desk="slate"] {
   transform: rotate(0deg) translateY(calc(var(--shift, 0px) - 5px)) scale(1.014);
   z-index: 5;
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, .8) inset,
-    0 2px 3px rgba(0, 0, 0, .2),
-    0 16px 26px -14px rgba(0, 0, 0, .5),
-    0 34px 54px -30px rgba(0, 0, 0, .6);
+    0 1px 0 rgba(255, 255, 255, .86) inset,
+    0 2px 2px rgba(0, 0, 0, .16),
+    0 6px 9px -4px rgba(0, 0, 0, .34),
+    0 20px 30px -16px rgba(0, 0, 0, .5),
+    0 40px 62px -34px rgba(0, 0, 0, .58);
 }
+
+/* ---------- 拖动排序 ---------- */
+/* 被拿起的卡片：脱离文档流跟随指针，抬起感更强，同时摆正倾斜（像把纸拿在手里） */
+.card.dragging {
+  position: fixed;
+  z-index: 60;
+  margin: 0;
+  opacity: .97;
+  pointer-events: none;
+  transition: none;
+  will-change: transform;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, .9) inset,
+    0 4px 6px rgba(0, 0, 0, .2),
+    0 18px 28px -12px rgba(0, 0, 0, .55),
+    0 36px 54px -28px rgba(0, 0, 0, .6);
+}
+
+/* 占位框：标出松手后会落到哪个位置 */
+.card-placeholder {
+  border: 2px dashed rgba(192, 102, 47, .42);
+  border-radius: 2px 2px 8px 6px;
+  background: rgba(192, 102, 47, .06);
+  min-height: 138px;
+  pointer-events: none;
+}
+
+body.is-dragging { user-select: none; }
+body.is-dragging * { cursor: grabbing !important; }
 
 /* 纸张类型 */
 .paper-lined {
@@ -688,7 +715,6 @@ body[data-desk="slate"] {
 .paper-sticky {
   background-color: var(--paper-sticky);
   background-image: linear-gradient(180deg, rgba(255, 255, 255, .42), rgba(220, 196, 60, .18) 78%);
-  box-shadow: 0 2px 3px rgba(0, 0, 0, .22), 0 12px 20px -12px rgba(0, 0, 0, .5), 0 1px 0 rgba(255, 255, 255, .7) inset;
 }
 
 .paper-mint {
@@ -884,24 +910,25 @@ body[data-desk="slate"] {
   transition: color .3s ease;
 }
 
-/* 手绘划线 */
+/* 手绘划线：用 width 从 0 展开（不要用 left + right 组合收起，
+   那样会算出 3px 宽度，未完成时会露出一个短点） */
 .todo-text::after {
   content: "";
   position: absolute;
   left: -3px;
-  right: 100%;
   top: 54%;
+  width: 0;
   height: 2px;
   border-radius: 2px;
   background: linear-gradient(90deg, rgba(186, 62, 56, .95), rgba(186, 62, 56, .7));
   transform: rotate(-1.1deg);
-  transition: right .36s cubic-bezier(.3, .9, .3, 1);
+  transition: width .36s cubic-bezier(.3, .9, .3, 1);
   pointer-events: none;
 }
 
 .todo-item.done .todo-text { color: #9a9088; }
 
-.todo-item.done .todo-text::after { right: -3px; }
+.todo-item.done .todo-text::after { width: calc(100% + 6px); }
 
 .card-foot {
   position: relative;
@@ -922,32 +949,7 @@ body[data-desk="slate"] {
 
 .foot-spacer { margin-left: auto; }
 
-/* 固定标记：图钉 / 胶带 */
-.card-pin {
-  position: absolute;
-  top: -6px;
-  left: 50%;
-  width: 17px;
-  height: 17px;
-  margin-left: -8px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 34% 28%, #fff9f2 0 13%, #e0574e 42%, #8d1d17 82%);
-  box-shadow: 0 3px 4px rgba(0, 0, 0, .45), inset 0 -1px 2px rgba(0, 0, 0, .35);
-  z-index: 4;
-}
-
-.card-pin::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 88%;
-  width: 2px;
-  height: 7px;
-  margin-left: -1px;
-  background: linear-gradient(180deg, rgba(90, 90, 90, .9), rgba(60, 60, 60, .2));
-  border-radius: 1px;
-}
-
+/* 固定标记：胶带 —— 所有「已固定」的卡片统一使用它，与纸张类型无关 */
 .card-tape {
   position: absolute;
   top: -11px;

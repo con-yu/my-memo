@@ -45,7 +45,8 @@ const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || '';
 const MAX_BODY = 512 * 1024; // 512KB
 const PAPERS = ['lined', 'grid', 'plain', 'kraft', 'sticky', 'mint'];
 const DESKS = ['ash', 'sand', 'mist', 'oak', 'linen', 'cork', 'wood', 'felt', 'slate'];
-const SORTS = ['updated', 'created', 'title'];
+const SORTS = ['updated', 'created', 'title', 'manual'];
+const MAX_ORDER = 1000; // 手动排序最多记录的 id 数
 const VIEW_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 const STATIC_MIME = {
@@ -85,7 +86,7 @@ function uid(prefix) {
 }
 
 function defaultSettings() {
-  return { desk: 'wood', sort: 'updated', view: 'all', lastPaper: 'lined' };
+  return { desk: 'wood', sort: 'updated', view: 'all', lastPaper: 'lined', order: [] };
 }
 
 function safeEqual(a, b) {
@@ -130,6 +131,14 @@ function sanitizeCategory(raw, id) {
   return { id: id, name: name, color: color };
 }
 
+// 手动排序序列：只接受短字符串 id，并限量，避免文件被写爆
+function sanitizeOrder(raw) {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((id) => typeof id === 'string' && id)
+    .map((id) => id.slice(0, 64))
+    .slice(0, MAX_ORDER);
+}
+
 // 单个账号的数据空间
 function emptySpace() {
   return { categories: [], notes: [], settings: defaultSettings() };
@@ -142,6 +151,7 @@ function normalizeSpace(raw) {
   if (SORTS.indexOf(settings.sort) < 0) settings.sort = 'updated';
   if (PAPERS.indexOf(settings.lastPaper) < 0) settings.lastPaper = 'lined';
   if (typeof settings.view !== 'string' || !VIEW_RE.test(settings.view)) settings.view = 'all';
+  settings.order = sanitizeOrder(settings.order);
 
   const categories = (Array.isArray(src.categories) ? src.categories : [])
     .map((c) => sanitizeCategory(c, c && c.id ? String(c.id).slice(0, 64) : uid('cat')))
@@ -340,6 +350,7 @@ async function handleSettings(req, res, space) {
   if (typeof body.sort === 'string' && SORTS.indexOf(body.sort) >= 0) s.sort = body.sort;
   if (typeof body.lastPaper === 'string' && PAPERS.indexOf(body.lastPaper) >= 0) s.lastPaper = body.lastPaper;
   if (typeof body.view === 'string' && VIEW_RE.test(body.view)) s.view = body.view;
+  if (Array.isArray(body.order)) s.order = sanitizeOrder(body.order);
 
   return commit(res, s);
 }
@@ -409,9 +420,13 @@ function handleStatic(req, res, pathname) {
       res.end('读取静态文件失败: ' + err.message);
       return;
     }
-    // 用「大小 + 修改时间」做 ETag：内容没变就回 304，省掉穿隧道的整包传输
-    const etag = '"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) + '"';
     const isHtml = name === 'index.html';
+    // 用「大小 + 修改时间」做 ETag：内容没变就回 304，省掉穿隧道的整包传输。
+    // HTML 还必须带上资源指纹：只改了 CSS/JS 时 HTML 自身没变，若仍回 304，
+    // 浏览器会沿用旧 HTML 里的旧指纹，继续命中它自己缓存中的 CSS/JS（max-age=3600），
+    // 于是「改了样式刷新却看不到」。带上指纹后，任何资源变动都会让 HTML 的 ETag 变化。
+    const etag = '"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) +
+      (isHtml ? '-' + assetStamp() : '') + '"';
     // CSS/JS 允许浏览器与 CF 边缘缓存 1 小时；HTML 每次都校验，保证改动即时可见
     const cacheControl = isHtml ? 'no-cache' : 'public, max-age=3600';
     const baseHead = {
