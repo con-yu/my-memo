@@ -216,6 +216,13 @@ body[data-desk="slate"] {
   gap: 10px;
 }
 
+/* 账号服务的头像组件挂在这里（挂载逻辑见 index.html 里的 account-widget.js） */
+.account-slot {
+  display: flex;
+  align-items: center;
+  margin-left: 2px;
+}
+
 /* 搜索框：像一张压在桌面上的纸条 */
 .search {
   position: relative;

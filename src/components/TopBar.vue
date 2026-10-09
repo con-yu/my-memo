@@ -80,6 +80,9 @@ function openDesk() {
       </button>
 
       <button class="btn btn-primary" @click="newNote">新建备忘录</button>
+
+      <!-- 右上角账号菜单：由账号服务的通用组件挂进来（见 index.html） -->
+      <span class="account-slot"></span>
     </div>
   </header>
 </template>
