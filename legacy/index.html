@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>我的备忘录 · Memo Board</title>
+<meta name="description" content="写实风格备忘录：分类、纸张卡片、可换桌面背景、待办勾选，数据由服务端保存。" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23f7e58a'/%3E%3Cpath d='M9 13h14M9 19h9' stroke='%23a8873a' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body data-desk="wood">
+
+<div class="desk-grain" aria-hidden="true"></div>
+<div class="desk-sheen" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-pin" aria-hidden="true"></span>
+    <div class="brand-text">
+      <h1>我的备忘录</h1>
+      <p>Memo &amp; To-do Board</p>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <label class="search">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="11" cy="11" r="6.4" /><path d="M15.8 15.8 20.5 20.5" /></svg>
+      <input id="searchInput" type="search" placeholder="搜索标题 / 内容 / 待办…" autocomplete="off" />
+    </label>
+
+    <label class="select-wrap">
+      <span class="select-label">排序</span>
+      <select id="sortSelect">
+        <option value="updated">最近修改</option>
+        <option value="created">创建时间</option>
+        <option value="title">标题</option>
+        <option value="manual">手动排序</option>
+      </select>
+    </label>
+
+    <button class="btn btn-ghost" id="deskBtn" aria-expanded="false" aria-haspopup="dialog" aria-controls="deskMask">
+      <span class="desk-preview sw-wood" id="deskPreview" aria-hidden="true"></span>
+      桌面
+    </button>
+
+    <button class="btn btn-primary" id="newNoteBtn">
+      新建备忘录
+    </button>
+
+
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="sidebar">
+    <div class="side-block">
+      <h2 class="side-title"><span>视图</span></h2>
+      <ul class="cat-list" id="viewList"></ul>
+    </div>
+    <div class="side-block side-block--cats">
+      <h2 class="side-title">
+        <span>分类</span>
+        <button class="mini-btn" id="newCatBtn" type="button">+ 新建</button>
+      </h2>
+      <ul class="cat-list" id="catList"></ul>
+    </div>
+    <div class="side-foot">
+      <p id="statLine">—</p>
+      <p class="side-hint">数据保存在服务器上</p>
+    </div>
+  </aside>
+
+  <section class="board-wrap">
+    <div class="board" id="board"></div>
+    <div class="empty" id="emptyState" hidden>
+      <div class="empty-note">
+        <h3>空空的桌面</h3>
+        <p>点右上角「新建备忘录」，写下第一条吧。</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ============ 备忘录编辑 ============ -->
+<div class="mask" id="noteMask" hidden>
+  <div class="sheet paper-lined" id="editorSheet" role="dialog" aria-modal="true" aria-label="编辑备忘录">
+    <div class="sheet-tape" aria-hidden="true"></div>
+    <form id="noteForm" autocomplete="off" novalidate>
+      <input id="noteTitle" class="title-input" type="text" placeholder="标题…" maxlength="80" />
+
+      <div class="type-switch" id="typeSwitch" role="tablist" aria-label="内容类型">
+        <button type="button" class="type-btn" data-type="text" role="tab">文字笔记</button>
+        <button type="button" class="type-btn" data-type="todo" role="tab">待办清单</button>
+      </div>
+
+      <div class="editor-body">
+        <label class="field" id="contentField">
+          <textarea id="noteContent" class="content-input" rows="6" placeholder="随手写点什么…"></textarea>
+        </label>
+        <div class="todo-editor" id="todoEditor" hidden>
+          <ul class="todo-edit-list" id="todoEditList"></ul>
+          <button type="button" class="add-todo" id="addTodoBtn">+ 添加一条待办</button>
+        </div>
+      </div>
+
+      <div class="editor-row">
+        <span class="row-label">分类</span>
+        <div class="chip-row" id="catChips"></div>
+      </div>
+
+      <div class="editor-row">
+        <span class="row-label">纸张</span>
+        <div class="chip-row" id="paperChips"></div>
+      </div>
+
+      <div class="editor-actions">
+        <button type="button" class="btn btn-danger-ghost" id="deleteNoteBtn">删除</button>
+        <button type="button" class="btn btn-ghost" id="copyNoteBtn" hidden>复制全文</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-ghost" id="cancelNoteBtn">取消</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+      <p class="editor-meta" id="editorMeta"></p>
+    </form>
+  </div>
+</div>
+
+<!-- ============ 分类编辑 ============ -->
+<div class="mask" id="catMask" hidden>
+  <div class="sheet sheet--sm paper-plain" role="dialog" aria-modal="true" aria-label="编辑分类">
+    <form id="catForm" autocomplete="off" novalidate>
+      <h3 class="sheet-title" id="catFormTitle">新建分类</h3>
+      <label class="field">
+        <span class="field-label">名称</span>
+        <input id="catName" class="line-input" type="text" maxlength="16" placeholder="例如：工作" />
+      </label>
+      <div class="editor-row">
+        <span class="row-label">颜色</span>
+        <div class="chip-row" id="colorChips"></div>
+      </div>
+      <div class="editor-actions">
+        <button type="button" class="btn btn-danger-ghost" id="deleteCatBtn" hidden>删除分类</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-ghost" id="cancelCatBtn">取消</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ============ 桌面材质 ============ -->
+<div class="mask" id="deskMask" hidden>
+  <div class="sheet sheet--sm paper-plain" role="dialog" aria-modal="true" aria-label="选择桌面材质">
+    <h3 class="sheet-title">桌面材质</h3>
+    <div class="desk-grid" id="deskGrid"></div>
+    <div class="editor-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary" id="deskDoneBtn">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 确认框 ============ -->
+<div class="mask mask--confirm" id="confirmMask" hidden>
+  <div class="sheet sheet--sm paper-plain" role="alertdialog" aria-modal="true" aria-label="确认操作">
+    <h3 class="sheet-title" id="confirmTitle">确认</h3>
+    <p class="confirm-text" id="confirmText"></p>
+    <div class="editor-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-ghost" id="confirmNo">取消</button>
+      <button type="button" class="btn btn-danger" id="confirmYes">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 服务未连接 ============ -->
+<div class="mask" id="offlineMask" hidden>
+  <div class="sheet sheet--sm paper-plain" role="alertdialog" aria-modal="true" aria-label="未连接到服务">
+    <h3 class="sheet-title">未连接到服务</h3>
+    <p class="confirm-text" id="offlineText">无法连接后端服务，备忘录的数据需要服务端支持。</p>
+    <p class="offline-hint">本地启动：<code>node server.js</code> 后访问 <code>http://127.0.0.1:5058/</code></p>
+    <div class="editor-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary" id="retryBtn">重试连接</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

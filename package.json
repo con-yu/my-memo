@@ -1,0 +1,20 @@
+{
+  "name": "my-memo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "桌面便签风格的个人备忘录 / 待办看板。注意：不设 type=module，server.js 是 CommonJS（线上 systemd 直接跑 node server.js）。",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "pinia": "^4.0.3",
+    "vue": "^3.5.43"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.9",
+    "@vueuse/core": "^15.0.0",
+    "vite": "^8.3.4"
+  }
+}

@@ -81,7 +81,7 @@
   | `todos` | id, note_id, text, done, ord |
   | `settings` | user_id(主键), desk, sort, view, last_paper |
 
-- **API 契约不变**，前端（`app.js`）无需改动
+- **API 契约不变**，前端（`src/`）无需改动
 - 迁移：写一个一次性脚本，遍历 `spaces` 按 `userId` 导入即可
 
 ### 第 2 步：PostgreSQL / MySQL（有并发、多服务共享时）

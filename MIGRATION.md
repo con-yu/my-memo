@@ -1,12 +1,27 @@
 # MIGRATION.md — Vue 3 + Vite 重构方案
 
-> ## 状态：**仅规划，尚未实施**
+> ## 状态：**已实施**
 >
-> 当前仓库仍是「零依赖 Node 服务 + 无构建原生前端」的实现。
-> 本文件描述的目录结构、`package.json`、`src/` 等**目前都还不存在**。
-> 阅读代码、排查问题、改动功能时，**一律以 `server.js` / `app.js` / `styles.css` / `index.html` 为准**。
+> 前端已迁移为 Vue 3 + Vite（源码 `src/`，产物 `dist/`）；`server.js` 仍是零依赖 CommonJS，只有静态托管部分改为
+> 「优先 `dist/`、找不到时回退 `legacy/`」。重构前的三个文件（`index.html` / `styles.css` / `app.js`）保留在 `legacy/` 以便回退。
 >
-> 这份文档的用途：在真正动手时不用重新做一遍调研；也提醒后来者「为什么当初决定这么做」。
+> 本文件保留为**决策记录**：为什么这么改、放弃了什么、当时如何取舍。
+> 阅读当前代码请以 `src/`、`server.js`、`README.md`、`AGENTS.md` 为准。
+
+---
+
+## 实施记录（与计划的差异）
+
+| 计划 | 实际 | 原因 |
+| --- | --- | --- |
+| `vite.config.js` | `vite.config.mjs` | `package.json` **不能**设 `type: module`（会让 `server.js` 的 `require` 直接报错），因此构建配置改用 `.mjs` |
+| 未规划回退目录 | 新增 `legacy/` | 保留重构前的可运行版本，`server.js` 在 `dist/` 缺失时自动回退，便于一键退回 |
+| `server.js` 删除 `assetStamp` / `injectAssetStamp` | 已删除，改为按扩展名映射的 `MIME_BY_EXT` + `staticRoot()` + `staticFileFor()` | Vite 产物的 hash 文件名取代了资源指纹注入 |
+| 组件与 store 数量 | 12 个组件、2 个 store、3 个 composable | 与计划一致 |
+
+**验证方式**：仓库没有测试框架，本次通过 Chrome DevTools 协议驱动真实浏览器完成端到端验证——
+覆盖首屏加载、搜索筛选、视图切换、卡片勾选、固定、编辑器（类型锁定 / 纸张 / 分类）、分类增删、
+桌面切换、拖拽排序与 `Alt+方向键`、增量 PATCH 请求体、离线遮罩与重试连接。
 
 ---
 

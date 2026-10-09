@@ -72,18 +72,33 @@
 
 ```
 my-memo/
-├── server.js      # 后端：零依赖 HTTP 服务 + REST API + 托管前端静态文件
-├── index.html     # 页面骨架（含编辑器/分类/桌面/确认/离线等弹层）
-├── styles.css     # 全部样式（含内联 SVG 材质：噪点、桌面、胶带等）
-├── app.js         # 前端逻辑（原生 JS，IIFE 单文件，无框架无构建）
-├── STORAGE.md     # 数据存储方案与演进路线（数据模型变化时同步更新）
-└── README.md      # 本文件
+├── server.js              # 后端：零依赖 HTTP 服务（CommonJS）+ REST API + 托管前端产物
+├── index.html             # Vite 入口（只留挂载点与模块脚本）
+├── vite.config.mjs        # 构建配置：base = /my-memo/，dev 时把 api 代理到 5058
+├── src/                   # 前端源码（Vue 3 + Vite）
+│   ├── main.js            # 应用入口（挂载 Vue + Pinia）
+│   ├── App.vue            # 布局与全局快捷键
+│   ├── constants.js       # 纸张 / 桌面 / 分类色 / 排序方式
+│   ├── utils.js           # uid、时间格式化、卡片倾斜与错落
+│   ├── styles/index.css   # 全部样式（桌面材质、纸张、弹窗等）
+│   ├── stores/            # data.js（数据与同步）、ui.js（提示 / 弹窗 / 离线）
+│   ├── composables/       # useDragSort、useClipboard、useNoteActions
+│   └── components/        # TopBar / SideBar / NoteBoard / MemoCard / CardTodoList
+│                          # base/BaseModal + modals/（编辑器、分类、桌面、确认、离线）
+├── dist/                  # 构建产物（部署时上传，`.gitignore`）
+├── legacy/                # 重构前的零构建版本，仅作回退，不参与开发
+├── STORAGE.md             # 数据存储方案与演进路线（数据模型变化时同步更新）
+├── MIGRATION.md           # 本次重构的方案与取舍
+├── AGENTS.md              # 给 AI 代理的工作约定
+└── README.md              # 本文件
 ```
 
 运行时目录（`.gitignore`）：
 
 ```
 data/store.json    # 数据文件，服务首次启动自动创建
+node_modules/      # 依赖
+dist/              # 构建产物
 ```
 
 ---
@@ -92,9 +107,9 @@ data/store.json    # 数据文件，服务首次启动自动创建
 
 | 项 | 说明 |
 | --- | --- |
-| 后端依赖 | **零 npm 依赖**，仅用 Node 内置模块（`http` / `fs` / `crypto` / `path`），Node ≥ 14 即可 |
-| 前端依赖 | 无框架、无构建步骤，改完文件刷新即生效 |
-| 部署形态 | 前端静态文件由 `server.js` 自己托管（不经过 Nginx 静态目录） |
+| 后端依赖 | **零 npm 依赖**，仅用 Node 内置模块（`http` / `fs` / `crypto` / `path`），Node ≥ 14 即可；**CommonJS**，线上直接 `node server.js` |
+| 前端依赖 | Vue 3 + Pinia，Vite 构建（`vue` / `pinia` / `vite` / `@vitejs/plugin-vue` / `@vueuse/core`） |
+| 部署形态 | `npm run build` 生成 `dist/`，由 `server.js` 托管（不经过 Nginx 静态目录）；找不到 `dist/` 时回退 `legacy/` |
 | **单进程单实例** | 数据在内存持有，多进程会互相覆盖 |
 | **手工改数据前必须先停服务** | SIGTERM 处理会把内存状态写回，直接改文件会被覆盖 |
 | 落盘方式 | 原子写：先写 `store.json.tmp` 再 `rename` |
@@ -159,8 +174,15 @@ data/store.json    # 数据文件，服务首次启动自动创建
 ## 八、本地开发
 
 ```bash
-# 本机调试：免鉴权，数据落在 anonymous 空间
-ALLOW_ANON=1 node server.js
+# 1) 接口服务：零依赖、免鉴权，数据落在 anonymous 空间
+ALLOW_ANON=1 node server.js        # → http://127.0.0.1:5058/
+
+# 2) 前端开发：Vite 热更新，api 自动代理到 5058
+npm install
+npm run dev                        # → http://localhost:5173/my-memo/
+
+# 3) 构建产物（部署形态）
+npm run build                      # → dist/
 ```
 
 Windows PowerShell：
@@ -169,7 +191,7 @@ Windows PowerShell：
 $env:ALLOW_ANON='1'; node server.js
 ```
 
-访问 <http://127.0.0.1:5058/>。
+访问 <http://127.0.0.1:5058/>（构建产物形态）或 <http://localhost:5173/my-memo/>（开发形态）。
 
 环境变量：
 
@@ -181,7 +203,7 @@ $env:ALLOW_ANON='1'; node server.js
 | `ALLOW_ANON` | 未设置 | 设为 `1` 时允许无身份访问（落到 `anonymous` 空间，**仅本机调试用**） |
 | `GATEWAY_TOKEN` | 未设置 | 未设置时不校验网关令牌（方便本机开发） |
 
-前端改动**无需重启**：服务每次请求都实时读取静态文件。改 `server.js` 必须重启进程。
+改 `src/` 后：开发模式热更新；要验证线上形态就 `npm run build` 再刷新页面。改 `server.js` 必须重启进程。
 
 ---
 
@@ -197,20 +219,21 @@ $env:ALLOW_ANON='1'; node server.js
 | 数据文件 | `/opt/my-memo/data/store.json` |
 | HTTPS | Cloudflare Tunnel（`cloudflared`），规范入口 `https://www.conyu.top/` |
 
-发布步骤（前端 + 后端）：
+发布步骤：
 
-1. 上传改动文件到 `/opt/my-memo/`（**不要上传本地的 `data/`**，会覆盖线上数据）
-2. 改了 `server.js` → `systemctl restart my-memo`；只改前端则无需重启
+1. 本地 `npm run build`，把 `dist/` 上传到 `/opt/my-memo/dist/`（**不要上传本地的 `data/`**，会覆盖线上数据）
+2. 改了 `server.js` → `systemctl restart my-memo`；只改前端则无需重启，但必须上传新的 `dist/`
 3. 验证：`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/my-memo/`、`systemctl is-active my-memo`
 
 ### 缓存策略（改动如何生效）
 
 | 资源 | 响应头 | 行为 |
 | --- | --- | --- |
-| `index.html` | `no-cache` + ETag（**含资源指纹**） | 每次刷新都校验；因 ETag 含指纹，改了 CSS/JS 也会让 HTML 立即回 200 |
-| `styles.css` / `app.js` | `public, max-age=3600` + ETag | 由 HTML 注入的 `?v=<大小-mtime>` 指纹负责失效，无需手动清缓存 |
+| `index.html` | `no-cache` + ETag | 每次刷新都校验 |
+| `assets/*-[hash].js` / `*-[hash].css` | `public, max-age=31536000, immutable` | 文件名由 Vite 带上内容 hash，内容变了 URL 就变，无需清缓存 |
+| 回退场景下的 `legacy/` 文件 | `public, max-age=3600` + ETag | 仅在 `dist/` 缺失时才会走到 |
 
-> 关键点：`index.html` 的 ETag 必须包含资源指纹。否则只改 CSS/JS 时 HTML 会一直回 304，浏览器拿着旧指纹继续用它自己缓存的资源，表现为「改了样式、刷新却没变化」。
+> 关键点：产物文件名自带内容 hash，因此不再有「改了样式刷新却没变化」的问题 —— 前提是**确实上传了新的 `dist/`**。
 
 ---
 
@@ -221,4 +244,4 @@ $env:ALLOW_ANON='1'; node server.js
 3. **多标签页不实时同步**：偏好的增量同步避免了互相覆盖，但界面不会自动刷新。
 4. **没有自动备份**：建议 cron 每日打包 `store.json`（方案见 STORAGE.md 第五节）。
 5. **拖动排序仅支持鼠标 / 触摸拖动与键盘 `Alt+方向键`**，未做拖到视口边缘的自动滚动。
-6. **子路径部署的静态资源**：`server.js` 按 basename 取文件，新增前端文件时需同步 `STATIC_MIME` 表与 HTML 里的引用。
+6. **静态路径解析**：`server.js` 只认 `/assets/` 之后的部分与带扩展名的文件名，其余一律回退 `index.html`（SPA fallback）；新增资源类型时同步 `MIME_BY_EXT`。

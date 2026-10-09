@@ -49,34 +49,65 @@ const SORTS = ['updated', 'created', 'title', 'manual'];
 const MAX_ORDER = 1000; // 手动排序最多记录的 id 数
 const VIEW_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-const STATIC_MIME = {
-  'index.html': 'text/html; charset=utf-8',
-  'styles.css': 'text/css; charset=utf-8',
-  'app.js': 'application/javascript; charset=utf-8'
+/* ------------------------------ 静态资源 ------------------------------ */
+
+// 前端由 Vite 构建，产物在 dist/（文件名自带内容 hash，天然解决版本错配）。
+// 找不到 dist 时回退 legacy/（重构前那份零构建版本），便于随时回退线上。
+const DIST_DIR = path.join(ROOT, 'dist');
+const LEGACY_DIR = path.join(ROOT, 'legacy');
+
+const MIME_BY_EXT = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.txt': 'text/plain; charset=utf-8'
 };
 
-// HTML 是 no-cache（每次校验），而 CSS/JS 允许缓存 1 小时。
-// 若只更新了 HTML（或反之），浏览器会拿到新 HTML 却仍用旧脚本，出现新旧不匹配。
-// 因此返回 HTML 时把「资源指纹」注入到引用上：内容一变 URL 就变，必然重新拉取；
-// 内容没变时 URL 不变，浏览器与 CF 边缘缓存照旧生效。
-const ASSET_FILES = ['styles.css', 'app.js'];
-
-function assetStamp() {
-  return ASSET_FILES.map((name) => {
-    try {
-      const st = fs.statSync(path.join(ROOT, name));
-      return st.size.toString(36) + '-' + Math.floor(st.mtimeMs / 1000).toString(36);
-    } catch (err) {
-      return '0';
-    }
-  }).join('.');
+// 托管的根目录：优先构建产物，其次历史版本；都没有则返回 null
+function staticRoot() {
+  if (fs.existsSync(path.join(DIST_DIR, 'index.html'))) return DIST_DIR;
+  if (fs.existsSync(path.join(LEGACY_DIR, 'index.html'))) return LEGACY_DIR;
+  return null;
 }
 
-function injectAssetStamp(html) {
-  const stamp = assetStamp();
-  return html
-    .replace('href="styles.css"', 'href="styles.css?v=' + stamp + '"')
-    .replace('src="app.js"', 'src="app.js?v=' + stamp + '"');
+// 请求路径 → 静态文件的绝对路径
+// 兼容子路径部署：Vite 产物都在 /assets/ 下，只取该段之后的部分；
+// 其余带扩展名的按文件名取；都匹配不上则回退 index.html（SPA fallback）。
+// 注：这里用同步 IO，个人应用流量极低，换来的是回退逻辑清晰可读。
+function staticFileFor(root, pathname) {
+  const indexPath = path.join(root, 'index.html');
+  const assetsAt = pathname.indexOf('/assets/');
+  let rel;
+
+  if (assetsAt !== -1) {
+    rel = pathname.slice(assetsAt + 1);
+  } else {
+    const base = path.posix.basename(pathname);
+    rel = /^[\w][\w.-]*\.[a-z0-9]{1,8}$/i.test(base) ? base : 'index.html';
+  }
+
+  const file = path.resolve(root, rel);
+  // 防目录穿越：解析结果必须仍在托管根目录内
+  if (file !== indexPath && !file.startsWith(root + path.sep)) return indexPath;
+  try {
+    if (!fs.statSync(file).isFile()) return indexPath;
+  } catch (err) {
+    return indexPath;
+  }
+  return file;
 }
 
 /* ------------------------------ 工具 ------------------------------ */
@@ -401,18 +432,25 @@ function handleStatic(req, res, pathname) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return sendJSON(res, 405, { error: 'method not allowed' });
   }
-  let base = '';
-  try {
-    base = path.posix.basename(decodeURIComponent(pathname));
-  } catch (err) {
-    base = '';
+
+  const root = staticRoot();
+  if (!root) {
+    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('未找到前端产物：请先在项目根目录执行 npm run build（或恢复 legacy/ 目录）');
+    return;
   }
-  if (base === 'favicon.ico') {
+
+  const file = staticFileFor(root, pathname);
+  const name = path.basename(file);
+  const isHtml = name === 'index.html';
+  // assets 下的文件名由 Vite 带上了内容 hash，可以长期强缓存
+  const isHashed = file.startsWith(path.join(root, 'assets') + path.sep);
+  const mime = MIME_BY_EXT[path.extname(name).toLowerCase()] || 'application/octet-stream';
+
+  if (name === 'favicon.ico' && !fs.existsSync(file)) {
     res.writeHead(204).end();
     return;
   }
-  const name = Object.prototype.hasOwnProperty.call(STATIC_MIME, base) ? base : 'index.html';
-  const file = path.join(ROOT, name);
 
   fs.stat(file, (err, st) => {
     if (err) {
@@ -420,15 +458,12 @@ function handleStatic(req, res, pathname) {
       res.end('读取静态文件失败: ' + err.message);
       return;
     }
-    const isHtml = name === 'index.html';
     // 用「大小 + 修改时间」做 ETag：内容没变就回 304，省掉穿隧道的整包传输。
-    // HTML 还必须带上资源指纹：只改了 CSS/JS 时 HTML 自身没变，若仍回 304，
-    // 浏览器会沿用旧 HTML 里的旧指纹，继续命中它自己缓存中的 CSS/JS（max-age=3600），
-    // 于是「改了样式刷新却看不到」。带上指纹后，任何资源变动都会让 HTML 的 ETag 变化。
-    const etag = '"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) +
-      (isHtml ? '-' + assetStamp() : '') + '"';
-    // CSS/JS 允许浏览器与 CF 边缘缓存 1 小时；HTML 每次都校验，保证改动即时可见
-    const cacheControl = isHtml ? 'no-cache' : 'public, max-age=3600';
+    // HTML 每次都校验（它引用的是带 hash 的资源）；带 hash 的资源可长期强缓存。
+    const etag = '"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) + '"';
+    const cacheControl = isHtml
+      ? 'no-cache'
+      : (isHashed ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
     const baseHead = {
       'ETag': etag,
       'Last-Modified': st.mtime.toUTCString(),
@@ -446,10 +481,8 @@ function handleStatic(req, res, pathname) {
         res.end('读取静态文件失败: ' + err2.message);
         return;
       }
-      // HTML 里的资源引用带上内容指纹，避免「页面已更新、脚本还是缓存的旧版」
-      if (isHtml) buf = Buffer.from(injectAssetStamp(buf.toString('utf8')), 'utf8');
       res.writeHead(200, Object.assign({
-        'Content-Type': STATIC_MIME[name],
+        'Content-Type': mime,
         'Content-Length': buf.length
       }, baseHead));
       if (req.method === 'HEAD') return res.end();
@@ -480,7 +513,9 @@ persist();
 
 server.listen(PORT, HOST, () => {
   const users = Object.keys(store.spaces).length;
+  const root = staticRoot();
   console.log('[my-memo] 服务已启动: http://' + HOST + ':' + PORT);
+  console.log('[my-memo] 静态内容: ' + (root ? path.relative(ROOT, root) + '/' : '未找到（请先执行 npm run build）'));
   console.log('[my-memo] 数据文件: ' + DATA_FILE + '（rev=' + store.rev + '，账号空间 ' + users + ' 个' +
     (store.pending ? '，有历史数据待继承' : '') + '）');
 });
