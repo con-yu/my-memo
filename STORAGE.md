@@ -93,12 +93,25 @@
 
 - 不要为了"看起来专业"在只有 2 个用户时引入 MySQL：装服务、建库、连接池、迁移脚本的复杂度会立刻超过收益
 
-## 五、备份现状与建议
+## 五、备份
 
-| 方案 | 做法 | 效果 |
+| 方案 | 做法 | 状态 |
 |------|------|------|
-| A. 本地滚动备份（0 成本） | cron 每日把两个 `store.json` 打成 `store-YYYYMMDD.tar.gz` 放 `/root/backup/rolling/`，保留 14 天 | 防误删、防写坏 |
-| B. 同步 OSS（推荐） | 用服务器上已有的 `aliyun` CLI 每天上传备份 | 防磁盘故障、异地留存 |
-| C. ECS 自动快照 | 控制台配置自动快照策略 | 整机兜底，恢复粒度粗 |
+| A. 本地滚动备份（0 成本） | `/root/backup/daily-backup.sh`：cron 每日 03:30 把两个 `store.json` 打包到 `/root/backup/rolling/store-<时间戳>.tar.gz`，保留 14 天，日志 `/var/log/my-memo-backup.log` | **已配置** |
+| B. 同步 OSS | 用服务器上已有的 `aliyun` CLI 每天上传备份 | 未配置 |
+| C. ECS 自动快照 | 控制台配置自动快照策略 | 未配置 |
 
-> 当前状态：**尚未配置自动备份**，`/root/backup/` 中只有手工备份。建议尽快补上 A（或 A+C）。
+为什么直接 `tar` 复制文件就够：两个服务都用「原子写」（先写 `.tmp` 再 `rename`），任意时刻读到的 `store.json` 都是完整版本，不会读到写了一半的坏文件。
+
+恢复方式：
+
+```bash
+systemctl stop my-memo site-auth
+cd / && tar xzf /root/backup/rolling/store-<时间戳>.tar.gz
+systemctl start my-memo site-auth
+```
+
+> 两个注意点：备份包内是相对路径（`opt/...`），解压前必须 `cd /`；恢复前必须先停服务，
+> 否则服务的 SIGTERM 处理会把内存状态写回、覆盖刚恢复的文件。
+
+> 建议后续补上 B（异地留存，防磁盘故障）—— 方案 A 只能防误删与写坏，备份与数据在同一块磁盘上。
