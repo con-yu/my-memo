@@ -217,6 +217,7 @@ $env:ALLOW_ANON='1'; node server.js
 | 服务管理 | systemd 服务 `my-memo`：`/usr/bin/node server.js`，监听 `127.0.0.1:5058` |
 | Nginx | `/etc/nginx/default.d/my-memo.conf`：`location /my-memo/` 反代（`auth_request` 鉴权 + `X-User-Id` 透传 + 网关令牌）；另有一条正则 location 让 `/my-memo/assets/*`（以及回退版本的 `styles.css` / `app.js`）**免鉴权**，以便 Cloudflare 边缘缓存 ✓ 改前端产物路径时记得同步这条规则 |
 | 数据文件 | `/opt/my-memo/data/store.json` |
+| Swap | 2 G `/swapfile`（`vm.swappiness=10`，已写入 `/etc/fstab` 开机自启）。未配置时内存耗尽会直接 OOM Kill 进程，而本服务数据在内存持有，被杀会丢最后一次未落盘的写 |
 | HTTPS | Cloudflare Tunnel（`cloudflared`），规范入口 `https://www.conyu.top/` |
 
 发布步骤：
